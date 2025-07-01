@@ -14,8 +14,8 @@ env:
   RG:          cursus-test-rg          # test Resource Group
   LOCATION:    eastasia
   APP:         cursus-test-app         # test Web-App
-  PLAN_SKU:    B1                      # dev-tier; bump if needed
-  TIMEOUT:     3600                    # seconds (1 h)
+  PLAN_SKU:    B1                      # dev tier; bump if needed
+  TIMEOUT:     1800                   # ≤30 min (App Service max)
 
 jobs:
   deploy:
@@ -59,11 +59,6 @@ jobs:
           --template-file infra/main.bicep \
           --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
 
-        if [[ $? -ne 0 ]]; then
-          echo "❌ Azure deployment failed."
-          exit 1
-        fi
-
         COSMOS=$(az deployment group show \
                    -g "$RG" \
                    -n "$DEPLOY_NAME" \
@@ -83,10 +78,8 @@ jobs:
       run: |
         set -eo pipefail
         principalId=$(az webapp identity show -g "$RG" -n "$APP" --query principalId -o tsv)
-
         roleId=$(az cosmosdb sql role definition list -g "$RG" --account-name "$COSMOS" \
                  --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
-
         az cosmosdb sql role assignment create -g "$RG" --account-name "$COSMOS" \
           --principal-id "$principalId" \
           --role-definition-id "$roleId" \
@@ -108,7 +101,6 @@ jobs:
           SCM_LOGSTREAM_TIMEOUT=240
 
         az webapp config set -g "$RG" -n "$APP" --always-on true
-
         az webapp log config -g "$RG" -n "$APP" \
           --application-logging filesystem \
           --detailed-error-messages true \

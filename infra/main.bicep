@@ -7,7 +7,7 @@ param location string = resourceGroup().location
 param planSkuName string = 'S1'
 
 @description('Container start-up grace period (sec, max 1800)')
-param timeout string = '1800'
+param timeout int = 1800          // ← now an *int*, not string
 
 /* ────────────────────────────────────────────────────────────────
    TEST stack – all resource names carry the “-test” prefix
@@ -21,22 +21,29 @@ var cosmosAccountName = '${toLower(replace(appName, '-', ''))}${substring(unique
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name:     planName
   location: location
-  sku:      {
+  sku: {
     name: planSkuName
     tier: startsWith(planSkuName, 'S') ? 'Standard' : 'Basic'
   }
   kind: 'linux'
-  properties: { reserved: true }
+  properties: {
+    reserved: true
+  }
 }
 
-/* ── Cosmos-DB (SQL API) ── */
+/* ── Cosmos DB (SQL API) ── */
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   name: cosmosAccountName
   location: location
   kind: 'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
-    locations: [ { locationName: location, failoverPriority: 0 } ]
+    locations: [
+      {
+        locationName: location
+        failoverPriority: 0
+      }
+    ]
   }
 }
 
@@ -55,7 +62,10 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   properties: {
     resource: {
       id: 'jsonContainer'
-      partitionKey: { paths: [ '/tag' ], kind: 'Hash' }
+      partitionKey: {
+        paths: [ '/tag' ]
+        kind:  'Hash'
+      }
     }
     options: {}
   }
@@ -66,7 +76,9 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
   kind: 'app,linux'
-  identity: { type: 'SystemAssigned' }
+  identity: {
+    type: 'SystemAssigned'
+  }
   properties: {
     serverFarmId: plan.id
     siteConfig: {
@@ -75,27 +87,32 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       healthCheckPath: '/healthz'
       appSettings: [
         { name: 'WEBSITES_PORT',                       value: '8000' }
-        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: timeout }
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: string(timeout) }   // cast → string
         { name: 'COSMOS_ENDPOINT',                     value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE',                     value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                    value: 'jsonContainer' }
       ]
     }
   }
-  dependsOn: [ cosmosContainer ]
+  dependsOn: [
+    cosmosContainer        // implicit for Cosmos, explicit for clarity
+  ]
 }
 
-/* ── Management-plane role (unchanged) ── */
+/* ── Management-plane role ── */
 resource cosmosRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(cosmos.id, 'cosmosrbac')
   scope: cosmos
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions','5bd9cd88-fe45-4216-938b-f97437e15450') // “DocumentDB Account Contributor”
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '5bd9cd88-fe45-4216-938b-f97437e15450'   // “DocumentDB Account Contributor”
+    )
     principalId:   app.identity.principalId
     principalType: 'ServicePrincipal'
   }
-  dependsOn: [ app ]
+  // explicit dependsOn no longer needed; Bicep infers dependency via principalId
 }
 
-/* ── expose real account name so GitHub Actions can see it ── */
+/* ── expose the real account name so GitHub Actions can read it ── */
 output cosmosAccountName string = cosmosAccountName
