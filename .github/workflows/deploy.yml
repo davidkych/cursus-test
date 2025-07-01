@@ -54,18 +54,29 @@ jobs:
         echo "✅ Resource group '$RG' is ready."
 
     # 5 ▸ provision infra & capture outputs -----------------------------------
-    - name: Provision infra (Bicep)
+    - name: Provision infra (Bicep) with debug
       id: infra
       shell: bash
       run: |
         set -eo pipefail
         DEPLOY_NAME="gh-${{ github.run_id }}"
+        DEBUG_LOG="deploy_debug.log"
+
         echo "🚀 running az deployment group create …"
-        az deployment group create \
+        # capture full --debug output for later inspection
+        az deployment group create --debug \
           --name "$DEPLOY_NAME" \
           --resource-group "$RG" \
           --template-file infra/main.bicep \
-          --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
+          --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT \
+          2>&1 | tee "$DEBUG_LOG"
+        # record the exit code of az command (not of tee)
+        AZ_EXIT=${PIPESTATUS[0]}
+
+        if [[ $AZ_EXIT -ne 0 ]]; then
+          echo "❌ Azure deployment failed (exit $AZ_EXIT). See $DEBUG_LOG for details."
+          exit $AZ_EXIT
+        fi
 
         echo "📄 deployment outputs ↓"
         az deployment group show -g "$RG" -n "$DEPLOY_NAME"
@@ -112,7 +123,7 @@ jobs:
           SCM_LOGSTREAM_TIMEOUT=240
 
         az webapp config set -g "$RG" -n "$APP" --always-on true
-        az webapp log  config -g "$RG" -n "$APP" \
+        az webapp log config -g "$RG" -n "$APP" \
           --application-logging filesystem \
           --detailed-error-messages true \
           --failed-request-tracing true
@@ -139,7 +150,6 @@ jobs:
             echo "✅ healthy"
             exit 0
           fi
-
           echo "⚠ unhealthy (HTTP $code) – backing off"
           sleep $((attempt*45))
         done
@@ -151,5 +161,7 @@ jobs:
     - if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: docker-log
-        path: live.log
+        name: diagnostics
+        path: |
+          live.log
+          deploy_debug.log
