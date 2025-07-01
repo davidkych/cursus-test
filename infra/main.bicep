@@ -7,15 +7,14 @@ param location string = resourceGroup().location
 param planSkuName string = 'S1'
 
 @description('Container start-up grace period (sec, max 1800)')
-param timeout int = 1800          // ← now an *int*, not string
+param timeout int = 1800        // int (not string)
 
 /* ────────────────────────────────────────────────────────────────
-   TEST stack – all resource names carry the “-test” prefix
-   so nothing can overlap with the production cursus resources.
+   TEST stack – every resource carries the “-test” prefix
    ──────────────────────────────────────────────────────────────── */
-var appName  = 'cursus-test-app'
-var planName = '${appName}-plan'
-var cosmosAccountName = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
+var appName            = 'cursus-test-app'
+var planName           = '${appName}-plan'
+var cosmosAccountName  = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
 
 /* ── App-Service Plan ── */
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
@@ -26,9 +25,7 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
     tier: startsWith(planSkuName, 'S') ? 'Standard' : 'Basic'
   }
   kind: 'linux'
-  properties: {
-    reserved: true
-  }
+  properties: { reserved: true }
 }
 
 /* ── Cosmos DB (SQL API) ── */
@@ -40,7 +37,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
     databaseAccountOfferType: 'Standard'
     locations: [
       {
-        locationName: location
+        locationName:     location
         failoverPriority: 0
       }
     ]
@@ -71,14 +68,12 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-/* ── Web App (system-assigned MI) ── */
+/* ── Web-App (system-assigned MI) ── */
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
   kind: 'app,linux'
-  identity: {
-    type: 'SystemAssigned'
-  }
+  identity: { type: 'SystemAssigned' }
   properties: {
     serverFarmId: plan.id
     siteConfig: {
@@ -87,7 +82,7 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       healthCheckPath: '/healthz'
       appSettings: [
         { name: 'WEBSITES_PORT',                       value: '8000' }
-        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: string(timeout) }   // cast → string
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: string(timeout) }
         { name: 'COSMOS_ENDPOINT',                     value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE',                     value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                    value: 'jsonContainer' }
@@ -95,24 +90,16 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
     }
   }
   dependsOn: [
-    cosmosContainer        // implicit for Cosmos, explicit for clarity
+    cosmosContainer      // explicit for clarity
   ]
 }
 
-/* ── Management-plane role ── */
-resource cosmosRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(cosmos.id, 'cosmosrbac')
-  scope: cosmos
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      '5bd9cd88-fe45-4216-938b-f97437e15450'   // “DocumentDB Account Contributor”
-    )
-    principalId:   app.identity.principalId
-    principalType: 'ServicePrincipal'
-  }
-  // explicit dependsOn no longer needed; Bicep infers dependency via principalId
-}
+/*  ── NOTE ────────────────────────────────────────────────────────
+    The management-plane role-assignment that was here is removed.
+    It required the SP to have “roleAssignments/write”, which it lacks.
+    Only data-plane role binding is needed and is already handled in
+    the GitHub Actions step after deployment.
+   ──────────────────────────────────────────────────────────────── */
 
-/* ── expose the real account name so GitHub Actions can read it ── */
+/* ── output for GitHub Actions ── */
 output cosmosAccountName string = cosmosAccountName
