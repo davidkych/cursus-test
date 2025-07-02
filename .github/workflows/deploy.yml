@@ -1,4 +1,4 @@
-﻿# ── .github/workflows/deploy.yml ─────────────────────────────────────
+﻿# ── .github/workflows/deploy.yml  (cursus-test) ─────────────────────────
 name: Azure Deployment (Test)
 
 on:
@@ -10,13 +10,13 @@ permissions:
   id-token: write
   contents: read
 
-# ── test-only resource names ─────────────────────────────────────────
+# ── test-only resource names ───────────────────────────────────────────
 env:
-  RG:          cursus-test-rg          # test Resource Group
+  RG:          cursus-test-rg          # resource-group (test)
   LOCATION:    eastasia
-  APP:         cursus-test-app         # test Web-App
-  PLAN_SKU:    B1                      # dev tier; bump if needed
-  TIMEOUT:     1800                    # ≤30 min (App Service max)
+  APP:         cursus-test-app         # web-app   (test)
+  PLAN_SKU:    B1                      # dev tier
+  TIMEOUT:     1800                    # sec – 30 min (matches bicep :int)
 
 jobs:
   deploy:
@@ -45,74 +45,43 @@ jobs:
         tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-    # 4 ▸ ensure the RG exists (idempotent) -----------------------------------
-    - name: Ensure Resource Group
-      shell: bash
-      run: |
-        set -e
-        az group create --name "$RG" --location "$LOCATION" --output none
-        echo "✅ Resource group '$RG' is ready."
-
-    # 5 ▸ provision infra & capture outputs -----------------------------------
-    - name: Provision infra (Bicep) with debug
+    # 4 ▸ provision infra & capture outputs -----------------------------------
+    - name: Provision infra (Bicep)
       id: infra
-      shell: bash
       run: |
         set -eo pipefail
-        DEPLOY_NAME="gh-${{ github.run_id }}"
-        DEBUG_LOG="deploy_debug.log"
+        DEPLOY_NAME=gh-${{ github.run_id }}
 
-        echo "🚀 running az deployment group create …"
-        # capture full --debug output for later inspection
-        az deployment group create --debug \
-          --name "$DEPLOY_NAME" \
-          --resource-group "$RG" \
+        az deployment group create \
+          --name $DEPLOY_NAME \
+          --resource-group $RG \
           --template-file infra/main.bicep \
-          --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT \
-          2>&1 | tee "$DEBUG_LOG"
-        # record the exit code of az command (not of tee)
-        AZ_EXIT=${PIPESTATUS[0]}
-
-        if [[ $AZ_EXIT -ne 0 ]]; then
-          echo "❌ Azure deployment failed (exit $AZ_EXIT). See $DEBUG_LOG for details."
-          exit $AZ_EXIT
-        fi
-
-        echo "📄 deployment outputs ↓"
-        az deployment group show -g "$RG" -n "$DEPLOY_NAME"
+          --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
 
         COSMOS=$(az deployment group show \
-                   -g "$RG" -n "$DEPLOY_NAME" \
+                   -g $RG \
+                   -n $DEPLOY_NAME \
                    --query "properties.outputs.cosmosAccountName.value" -o tsv)
 
-        if [[ -z "$COSMOS" ]]; then
-          echo "❌ COSMOS account name not found in deployment outputs."
-          exit 1
-        fi
+        echo "COSMOS=$COSMOS"           >> $GITHUB_ENV
+        echo "DEPLOY_NAME=$DEPLOY_NAME" >> $GITHUB_ENV
 
-        echo "COSMOS=$COSMOS"           >> "$GITHUB_ENV"
-        echo "DEPLOY_NAME=$DEPLOY_NAME" >> "$GITHUB_ENV"
-
-    # 6 ▸ grant **data-plane** role to the Web-App MSI ------------------------
+    # 5 ▸ grant **data-plane** role to the Web-App MSI ------------------------
     - name: Grant Cosmos “Built-in Data Contributor” role
-      shell: bash
       run: |
-        set -eo pipefail
-        principalId=$(az webapp identity show -g "$RG" -n "$APP" --query principalId -o tsv)
-        roleId=$(az cosmosdb sql role definition list -g "$RG" --account-name "$COSMOS" \
-                  --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+        principalId=$(az webapp identity show -g $RG -n $APP --query principalId -o tsv)
+        roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
+                 --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
 
-        az cosmosdb sql role assignment create -g "$RG" --account-name "$COSMOS" \
-          --principal-id "$principalId" \
-          --role-definition-id "$roleId" \
+        az cosmosdb sql role assignment create -g $RG --account-name $COSMOS \
+          --principal-id $principalId \
+          --role-definition-id $roleId \
           --scope "/" || true
 
-    # 7 ▸ base app-settings ----------------------------------------------------
+    # 6 ▸ base app-settings ----------------------------------------------------
     - name: Configure App Service
-      shell: bash
       run: |
-        set -eo pipefail
-        az webapp config appsettings set -g "$RG" -n "$APP" --settings \
+        az webapp config appsettings set -g $RG -n $APP --settings \
           WEBSITE_RUN_FROM_PACKAGE=0 \
           SCM_DO_BUILD_DURING_DEPLOYMENT=false \
           WEBSITES_PORT=8000 \
@@ -122,13 +91,13 @@ jobs:
           WEBSITES_LOG_MESSAGE_LEVEL=Verbose \
           SCM_LOGSTREAM_TIMEOUT=240
 
-        az webapp config set -g "$RG" -n "$APP" --always-on true
-        az webapp log config -g "$RG" -n "$APP" \
+        az webapp config set -g $RG -n $APP --always-on true
+        az webapp log config -g $RG -n $APP \
           --application-logging filesystem \
           --detailed-error-messages true \
           --failed-request-tracing true
 
-    # 8 ▸ ZIP-deploy with health checks ---------------------------------------
+    # 7 ▸ ZIP-deploy with health checks ---------------------------------------
     - name: ZIP-deploy with health checks
       shell: bash
       run: |
@@ -138,30 +107,24 @@ jobs:
 
         for attempt in 1 2; do
           echo "🚀 ZIP-deploy attempt $attempt"
-          az webapp deploy -g "$RG" -n "$APP" --src-path app.zip --type zip --timeout 200 || true
+          az webapp deploy -g $RG -n $APP --src-path app.zip --type zip --timeout 200 || true
 
           echo "📡 streaming container log 90 s …"
-          timeout 90s az webapp log tail -g "$RG" -n "$APP" | tee live.log || true
+          timeout 90s az webapp log tail -g $RG -n $APP | tee live.log || true
           sleep 10
 
-          code=$(curl -s -o /dev/null -w '%{http_code}' \
-                 "https://$APP.azurewebsites.net/healthz" || true)
-          if [[ "$code" == "200" ]]; then
-            echo "✅ healthy"
-            exit 0
-          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
+          [[ "$code" == "200" ]] && { echo "✅ healthy"; exit 0; }
+
           echo "⚠ unhealthy (HTTP $code) – backing off"
           sleep $((attempt*45))
         done
 
-        echo "💥 deploy failed after 3 attempts"
-        exit 1
+        echo "💥 deploy failed after 3 attempts"; exit 1
 
-    # 9 ▸ save logs on failure -------------------------------------------------
+    # 8 ▸ save logs on failure -------------------------------------------------
     - if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: diagnostics
-        path: |
-          live.log
-          deploy_debug.log
+        name: docker-log
+        path: live.log

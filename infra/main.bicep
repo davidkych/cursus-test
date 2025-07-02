@@ -1,4 +1,5 @@
-﻿targetScope = 'resourceGroup'
+﻿// ── infra/main.bicep  (cursus-test) ──────────────────────────────────
+targetScope = 'resourceGroup'
 
 @description('Azure region')
 param location string = resourceGroup().location
@@ -7,10 +8,11 @@ param location string = resourceGroup().location
 param planSkuName string = 'S1'
 
 @description('Container start-up grace period (sec, max 1800)')
-param timeout int = 1800        // int (not string)
+param timeout int = 1800          // int (not string)
 
 /* ────────────────────────────────────────────────────────────────
    TEST stack – every resource carries the “-test” prefix
+   so nothing can overlap with production “cursus”.
    ──────────────────────────────────────────────────────────────── */
 var appName            = 'cursus-test-app'
 var planName           = '${appName}-plan'
@@ -68,7 +70,7 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-/* ── Web-App (system-assigned MI) ── */
+/* ── Web App (system-assigned MI) ── */
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -93,13 +95,6 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
     cosmosContainer      // explicit for clarity
   ]
 }
-
-/*  ── NOTE ────────────────────────────────────────────────────────
-    The management-plane role-assignment that was here is removed.
-    It required the SP to have “roleAssignments/write”, which it lacks.
-    Only data-plane role binding is needed and is already handled in
-    the GitHub Actions step after deployment.
-   ──────────────────────────────────────────────────────────────── */
 
 /* ── output for GitHub Actions ── */
 output cosmosAccountName string = cosmosAccountName
