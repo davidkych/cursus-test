@@ -7,7 +7,7 @@ param location string = resourceGroup().location
 @description('App-Service plan SKU (B1, S1, P1v2 …)')
 param planSkuName string = 'S1'
 
-@description('Container start-up grace period (sec, max 1800)')
+@description('Container start-up grace period for the **web-app** (sec, max 1800)')
 param timeout int = 1800          // int (not string)
 
 /* ────────────────────────────────────────────────────────────────
@@ -18,7 +18,11 @@ var appName            = 'cursus-test-app'
 var planName           = '${appName}-plan'
 var cosmosAccountName  = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
 
-/* ── App-Service Plan ── */
+/* ===== NEW – Durable Scheduler vars ================================= */
+var schedFuncName      = 'cursus-test-sched'
+var schedStorageName   = '${toLower(replace(schedFuncName, '-', ''))}sa${substring(uniqueString(resourceGroup().id),0,6)}'
+
+/* ── App-Service Plan (shared by web-app & scheduler) ─────────────── */
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name:     planName
   location: location
@@ -30,7 +34,7 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   properties: { reserved: true }
 }
 
-/* ── Cosmos DB (SQL API) ── */
+/* ── Cosmos DB (SQL API) ──────────────────────────────────────────── */
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   name: cosmosAccountName
   location: location
@@ -70,7 +74,7 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-/* ── Web App (system-assigned MI) ── */
+/* ── Web-App (FastAPI) ────────────────────────────────────────────── */
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -91,10 +95,110 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       ]
     }
   }
+  dependsOn: [ cosmosContainer ]   // explicit for clarity
+}
+
+/* ====================================================================
+   DURABLE SCHEDULER  (Function-App + Storage + Diagnostics)
+   ==================================================================== */
+
+/* ── Storage account for Durable Functions state & logs ───────────── */
+resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: schedStorageName
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    enableHttpsTrafficOnly: true
+  }
+}
+
+/* Build connection string for app-settings */
+var schedStorageKey        = listKeys(schedStorage.id, schedStorage.apiVersion).keys[0].value
+var schedStorageConnection = 'DefaultEndpointsProtocol=https;AccountName=${schedStorage.name};AccountKey=${schedStorageKey};EndpointSuffix=${environment().suffixes.storage}'
+
+/* ── Function-App (Durable Scheduler) ─────────────────────────────── */
+resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
+  name: schedFuncName
+  location: location
+  kind: 'functionapp,linux'
+  identity: { type: 'SystemAssigned' }
+  properties: {
+    httpsOnly: true
+    serverFarmId: plan.id        // ← re-use existing plan (no extra cost)
+    siteConfig: {
+      linuxFxVersion: 'Python|3.9'
+      appSettings: [
+        // -- Core runtime --
+        { name: 'FUNCTIONS_WORKER_RUNTIME',                       value: 'python' }
+        { name: 'FUNCTIONS_EXTENSION_VERSION',                    value: '~4' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE',                       value: '1' }
+        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',            value: 'true' }
+
+        // -- Durable Functions storage --
+        { name: 'AzureWebJobsStorage',                            value: schedStorageConnection }
+        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING',       value: schedStorageConnection }
+        { name: 'WEBSITE_CONTENTSHARE',                           value: toLower(schedFuncName) }
+
+        // -- Upstream Cosmos settings --
+        { name: 'COSMOS_ENDPOINT',                                value: cosmos.properties.documentEndpoint }
+        { name: 'COSMOS_DATABASE',                                value: 'cursusdb' }
+        { name: 'COSMOS_CONTAINER',                               value: 'jsonContainer' }
+
+        // -- Diagnostics & log level --
+        { name: 'APP_LOG_LEVEL',                                  value: 'Information' }
+      ]
+    }
+  }
   dependsOn: [
-    cosmosContainer      // explicit for clarity
+    schedStorage,
+    cosmosContainer
   ]
 }
 
-/* ── output for GitHub Actions ── */
-output cosmosAccountName string = cosmosAccountName
+/* ── Diagnostic Settings (platform logs → storage) ────────────────── */
+resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+  name: '${schedFuncName}-diag'
+  scope: schedFunc
+  properties: {
+    storageAccountId: schedStorage.id
+    logs: [
+      {
+        category:      'FunctionAppLogs'
+        enabled:       true
+        retentionPolicy: {
+          enabled: true
+          days:    7
+        }
+      }
+      {
+        category:      'AppServiceHTTPLogs'
+        enabled:       true
+        retentionPolicy: {
+          enabled: true
+          days:    7
+        }
+      }
+    ]
+    metrics: [
+      {
+        category:      'AllMetrics'
+        enabled:       true
+        retentionPolicy: {
+          enabled: false
+          days:    0
+        }
+      }
+    ]
+  }
+  dependsOn: [ schedFunc ]
+}
+
+/* ── Outputs (consumed by GitHub Actions) ─────────────────────────── */
+output cosmosAccountName       string = cosmosAccountName
+output schedulerFunctionName   string = schedFuncName
+output schedulerStorageName    string = schedStorageName

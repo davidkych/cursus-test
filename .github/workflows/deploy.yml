@@ -10,17 +10,24 @@ permissions:
   id-token: write
   contents: read
 
-# ── test-only resource names ───────────────────────────────────────────
+# ── resource names / global defaults ──────────────────────────────────
 env:
   RG:          cursus-test-rg          # resource-group (test)
   LOCATION:    eastasia
-  APP:         cursus-test-app         # web-app   (test)
-  PLAN_SKU:    B1                      # dev tier
-  TIMEOUT:     1800                    # sec – 30 min (matches bicep :int)
+  APP:         cursus-test-app         # FastAPI web-app (test)
+  PLAN_SKU:    B1                      # dev tier (shared plan)
+  TIMEOUT:     1800                    # sec – 30 min (web-app start limit)
 
 jobs:
+# ======================================================================
+# 1 ⸺ deploy  ❱❱  infra  +  web-app  (FastAPI)
+# ======================================================================
   deploy:
     runs-on: ubuntu-latest
+
+    outputs:
+      cosmos:      ${{ steps.infra.outputs.cosmos }}
+      sched_func:  ${{ steps.infra.outputs.sched_func }}
 
     steps:
     # 1 ▸ checkout & toolchain -----------------------------------------------
@@ -58,28 +65,38 @@ jobs:
           --template-file infra/main.bicep \
           --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
 
+        # ── capture outputs for later jobs ─────────────────────────────
         COSMOS=$(az deployment group show \
-                   -g $RG \
-                   -n $DEPLOY_NAME \
+                   -g $RG -n $DEPLOY_NAME \
                    --query "properties.outputs.cosmosAccountName.value" -o tsv)
 
+        SCHED_FUNC=$(az deployment group show \
+                       -g $RG -n $DEPLOY_NAME \
+                       --query "properties.outputs.schedulerFunctionName.value" -o tsv)
+
         echo "COSMOS=$COSMOS"           >> $GITHUB_ENV
-        echo "DEPLOY_NAME=$DEPLOY_NAME" >> $GITHUB_ENV
+        echo "SCHED_FUNC=$SCHED_FUNC"   >> $GITHUB_ENV
+
+        echo "cosmos=$COSMOS"           >> $GITHUB_OUTPUT
+        echo "sched_func=$SCHED_FUNC"   >> $GITHUB_OUTPUT
+
+        echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED_FUNC"
 
     # 5 ▸ grant **data-plane** role to the Web-App MSI ------------------------
-    - name: Grant Cosmos “Built-in Data Contributor” role
+    - name: Grant Cosmos “Built-in Data Contributor” role (web-app)
       run: |
+        set -eo pipefail
         principalId=$(az webapp identity show -g $RG -n $APP --query principalId -o tsv)
         roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
                  --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
-
         az cosmosdb sql role assignment create -g $RG --account-name $COSMOS \
           --principal-id $principalId \
           --role-definition-id $roleId \
           --scope "/" || true
+        echo "✅ web-app MSI granted data-plane role"
 
     # 6 ▸ base app-settings ----------------------------------------------------
-    - name: Configure App Service
+    - name: Configure Web-App settings
       run: |
         az webapp config appsettings set -g $RG -n $APP --settings \
           WEBSITE_RUN_FROM_PACKAGE=0 \
@@ -90,15 +107,15 @@ jobs:
           WEBSITES_STARTUP_COMMAND="gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app" \
           WEBSITES_LOG_MESSAGE_LEVEL=Verbose \
           SCM_LOGSTREAM_TIMEOUT=240
-
         az webapp config set -g $RG -n $APP --always-on true
         az webapp log config -g $RG -n $APP \
           --application-logging filesystem \
           --detailed-error-messages true \
           --failed-request-tracing true
+        echo "⚙️  base app-settings applied"
 
-    # 7 ▸ ZIP-deploy with health checks ---------------------------------------
-    - name: ZIP-deploy with health checks
+    # 7 ▸ ZIP-deploy web-app with health checks -------------------------------
+    - name: ZIP-deploy FastAPI web-app
       shell: bash
       run: |
         set -eo pipefail
@@ -120,11 +137,83 @@ jobs:
           sleep $((attempt*45))
         done
 
-        echo "💥 deploy failed after 3 attempts"; exit 1
+        echo "💥 web-app deploy failed after 2 attempts"; exit 1
 
     # 8 ▸ save logs on failure -------------------------------------------------
     - if: failure()
       uses: actions/upload-artifact@v4
       with:
-        name: docker-log
+        name: webapp-log
         path: live.log
+
+# ======================================================================
+# 2 ⸺ deploy_scheduler  ❱❱  package & deploy Durable-Function app
+# ======================================================================
+  deploy_scheduler:
+    needs: deploy
+    runs-on: ubuntu-latest
+
+    env:
+      COSMOS:      ${{ needs.deploy.outputs.cosmos }}
+      SCHED_FUNC:  ${{ needs.deploy.outputs.sched_func }}
+      # inherit RG, APP, LOCATION from top-level env
+
+    steps:
+    # 1 ▸ checkout & toolchain -----------------------------------------------
+    - uses: actions/checkout@v3
+
+    - uses: actions/setup-python@v4
+      with:
+        python-version: "3.9"
+        cache: pip
+
+    # 2 ▸ Azure login ---------------------------------------------------------
+    - uses: azure/login@v1
+      with:
+        client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    # 3 ▸ zip-package & deploy scheduler Function-App -------------------------
+    - name: ZIP-deploy scheduler Function-App
+      shell: bash
+      run: |
+        set -eo pipefail
+        pushd src/scheduler_fapp
+        zip -qr ../../sched.zip .
+        popd
+        echo "📦 scheduler zip size: $(du -h sched.zip | cut -f1)"
+
+        az functionapp deployment source config-zip \
+          -g $RG -n $SCHED_FUNC --src-path sched.zip
+
+        echo "🚀 scheduler deployed – tailing log 60 s …"
+        timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
+
+    # 4 ▸ grant Cosmos role to scheduler MSI ----------------------------------
+    - name: Grant Cosmos role (scheduler MSI)
+      run: |
+        set -eo pipefail
+        principalId=$(az webapp identity show -g $RG -n $SCHED_FUNC --query principalId -o tsv)
+        roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
+                 --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+        az cosmosdb sql role assignment create -g $RG --account-name $COSMOS \
+          --principal-id $principalId \
+          --role-definition-id $roleId \
+          --scope "/" || true
+        echo "✅ scheduler MSI granted data-plane role"
+
+    # 5 ▸ expose scheduler base URL to web-app -------------------------------
+    - name: Update web-app with SCHEDULER_BASE_URL
+      run: |
+        sched_base="https://$SCHED_FUNC.azurewebsites.net"
+        az webapp config appsettings set -g $RG -n $APP --settings \
+          SCHEDULER_BASE_URL=$sched_base
+        echo "🔗 web-app now knows scheduler base $sched_base"
+
+    # 6 ▸ save logs on failure ------------------------------------------------
+    - if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: scheduler-log
+        path: sched.log

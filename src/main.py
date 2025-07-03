@@ -1,32 +1,32 @@
 ﻿# ── src/main.py ───────────────────────────────────────────────────────
 from fastapi import FastAPI
 
-from routers.hello.endpoints             import router as hello_router
-from routers.healthz.endpoints           import router as health_router
-from routers.jsondata.endpoints          import router as jsondata_router
-from routers.jsondata.html_endpoints     import router as html_json_router
-
-from routers.log.endpoints               import router as log_router
-from routers.log.html_console_endpoint   import router as log_console_router   # ← NEW
+# core modules
+from routers.hello.endpoints               import router as hello_router
+from routers.healthz.endpoints             import router as health_router
+from routers.jsondata.endpoints            import router as jsondata_router
+from routers.jsondata.html_endpoints       import router as html_json_router
+from routers.log.endpoints                 import router as log_router
+from routers.log.html_console_endpoint     import router as log_console_router
+from routers.schedule.endpoints            import router as schedule_router            # ← NEW
 
 # LCSD sub-modules
-from routers.lcsd.probe_endpoints               import router as lcsd_probe_router
-from routers.lcsd.html_probe_endpoints          import router as lcsd_html_probe_router
-from routers.lcsd.master_endpoints              import router as lcsd_master_router
-from routers.lcsd.html_master_endpoints         import router as lcsd_html_master_router
-from routers.lcsd.timetableprobe_endpoints      import router as lcsd_timetableprobe_router
-from routers.lcsd.html_timetableprobe_endpoints import router as lcsd_html_timetableprobe_router
-from routers.lcsd.timetable_endpoints           import router as lcsd_timetable_router
-from routers.lcsd.html_timetable_endpoints      import router as lcsd_html_timetable_router
-from routers.lcsd.timetablepdf_endpoints        import router as lcsd_timetablepdf_router
-from routers.lcsd.html_timetablepdf_endpoints   import router as lcsd_html_timetablepdf_router
-from routers.lcsd.timetableexcel_endpoints      import router as lcsd_timetableexcel_router
-from routers.lcsd.html_timetableexcel_endpoints import router as lcsd_html_timetableexcel_router
-from routers.lcsd.availability_endpoints        import router as lcsd_availability_router
-from routers.lcsd.html_availability_endpoints   import router as lcsd_html_availability_router
-from routers.lcsd.html_dashboard_endpoints      import router as lcsd_html_dashboard_router
-from routers.lcsd.html_dashboard_monthview_endpoints import \
-    router as lcsd_html_monthview_router
+from routers.lcsd.probe_endpoints                 import router as lcsd_probe_router
+from routers.lcsd.html_probe_endpoints            import router as lcsd_html_probe_router
+from routers.lcsd.master_endpoints                import router as lcsd_master_router
+from routers.lcsd.html_master_endpoints           import router as lcsd_html_master_router
+from routers.lcsd.timetableprobe_endpoints        import router as lcsd_timetableprobe_router
+from routers.lcsd.html_timetableprobe_endpoints   import router as lcsd_html_timetableprobe_router
+from routers.lcsd.timetable_endpoints             import router as lcsd_timetable_router
+from routers.lcsd.html_timetable_endpoints        import router as lcsd_html_timetable_router
+from routers.lcsd.timetablepdf_endpoints          import router as lcsd_timetablepdf_router
+from routers.lcsd.html_timetablepdf_endpoints     import router as lcsd_html_timetablepdf_router
+from routers.lcsd.timetableexcel_endpoints        import router as lcsd_timetableexcel_router
+from routers.lcsd.html_timetableexcel_endpoints   import router as lcsd_html_timetableexcel_router
+from routers.lcsd.availability_endpoints          import router as lcsd_availability_router
+from routers.lcsd.html_availability_endpoints     import router as lcsd_html_availability_router
+from routers.lcsd.html_dashboard_endpoints        import router as lcsd_html_dashboard_router
+from routers.lcsd.html_dashboard_monthview_endpoints import router as lcsd_html_monthview_router
 
 app = FastAPI()
 
@@ -36,7 +36,9 @@ app.include_router(health_router)
 app.include_router(jsondata_router)
 app.include_router(html_json_router)
 app.include_router(log_router)
-app.include_router(log_console_router)   # ← NEW
+app.include_router(log_console_router)
+app.include_router(schedule_router)      # ← NEW
+
 # ── LCSD routes ──────────────────────────────────────────────────────
 app.include_router(lcsd_probe_router)
 app.include_router(lcsd_html_probe_router)
@@ -62,6 +64,7 @@ def root():
         "status": "ok",
         "info": (
             "/api/hello, /healthz, /api/json/*, /api/log, /api/log/console/, "
+            "/api/schedule (POST|DELETE), "                                   # ← NEW
             "/api/lcsd/probe (GET|POST), /api/lcsd/probe/html, "
             "/api/lcsd/master (GET|POST), /api/lcsd/master/html, "
             "/api/lcsd/timetableprobe (GET|POST), /api/lcsd/timetableprobe/html, "
