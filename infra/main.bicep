@@ -11,18 +11,18 @@ param planSkuName string = 'S1'
 param timeout int = 1800
 
 /* ────────────────────────────────────────────────────────────────
-   TEST stack – every resource carries the “-test” prefix
-   so nothing can overlap with production “cursus”.
+   TEST stack – every resource carries the “-test” prefix so that
+   nothing can overlap with production “cursus”.
    ──────────────────────────────────────────────────────────────── */
-var appName            = 'cursus-test-app'
-var planName           = '${appName}-plan'
-var cosmosAccountName  = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
+var appName           = 'cursus-test-app'
+var planName          = '${appName}-plan'
+var cosmosAccountName = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
 
-/* ===== NEW – Durable Scheduler vars ================================= */
+/* ===== Durable Scheduler vars ==================================== */
 var schedFuncName    = 'cursus-test-sched'
 var schedStorageName = '${toLower(replace(schedFuncName, '-', ''))}sa${substring(uniqueString(resourceGroup().id),0,6)}'
 
-/* ── App-Service Plan (shared) ────────────────────────────────────── */
+/* ── App-Service Plan (shared) ───────────────────────────────────── */
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name:     planName
   location: location
@@ -36,11 +36,11 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   }
 }
 
-/* ── Cosmos DB (SQL API) ──────────────────────────────────────────── */
+/* ── Cosmos DB (SQL API) ─────────────────────────────────────────── */
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
-  name: cosmosAccountName
+  name:     cosmosAccountName
   location: location
-  kind: 'GlobalDocumentDB'
+  kind:     'GlobalDocumentDB'
   properties: {
     databaseAccountOfferType: 'Standard'
     locations: [
@@ -76,7 +76,7 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-/* ── Web-App (FastAPI) ────────────────────────────────────────────── */
+/* ── Web-App (FastAPI) ───────────────────────────────────────────── */
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -98,34 +98,34 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
     }
   }
   dependsOn: [
-    cosmosContainer          // explicit for clarity
+    cosmosContainer
   ]
 }
 
-/* ====================================================================
+/* ===================================================================
    DURABLE SCHEDULER  (Function-App + Storage + Diagnostics)
-   ==================================================================== */
+   =================================================================== */
 
-/* ── Storage account for Durable Functions state & logs ───────────── */
+/* ── Storage account for Durable state & logs ────────────────────── */
 resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: schedStorageName
+  name:     schedStorageName
   location: location
-  kind: 'StorageV2'
+  kind:     'StorageV2'
   sku: {
     name: 'Standard_LRS'
   }
   properties: {
     minimumTlsVersion:        'TLS1_2'
     allowBlobPublicAccess:    false
-    supportsHttpsTrafficOnly: true   // ← fixed property name
+    supportsHttpsTrafficOnly: true   // property name correct for 2023-01-01 API
   }
 }
 
-/* Build connection string for app-settings */
-var schedStorageKey        = listKeys(schedStorage.id, schedStorage.apiVersion).keys[0].value
+/* Build connection string for app-settings (lint-preferred syntax) */
+var schedStorageKey        = schedStorage.listKeys().keys[0].value
 var schedStorageConnection = 'DefaultEndpointsProtocol=https;AccountName=${schedStorage.name};AccountKey=${schedStorageKey};EndpointSuffix=${environment().suffixes.storage}'
 
-/* ── Function-App (Durable Scheduler) ─────────────────────────────── */
+/* ── Function-App (Durable Scheduler) ────────────────────────────── */
 resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   name: schedFuncName
   location: location
@@ -133,7 +133,7 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   identity: { type: 'SystemAssigned' }
   properties: {
     httpsOnly:   true
-    serverFarmId: plan.id    // reuse existing plan
+    serverFarmId: plan.id            // reuse shared plan
     siteConfig: {
       linuxFxVersion: 'Python|3.9'
       appSettings: [
@@ -142,29 +142,29 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'WEBSITE_RUN_FROM_PACKAGE',                 value: '1' }
         { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',      value: 'true' }
 
-        // Durable Functions storage
+        // Durable storage
         { name: 'AzureWebJobsStorage',                      value: schedStorageConnection }
         { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: schedStorageConnection }
         { name: 'WEBSITE_CONTENTSHARE',                     value: toLower(schedFuncName) }
 
-        // Upstream Cosmos settings
+        // Cosmos settings
         { name: 'COSMOS_ENDPOINT',                          value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE',                          value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                         value: 'jsonContainer' }
 
-        // Diagnostics
+        // Diagnostics level
         { name: 'APP_LOG_LEVEL',                            value: 'Information' }
       ]
     }
   }
   dependsOn: [
-    cosmosContainer          // storage dependency implicit via app-settings
+    cosmosContainer
   ]
 }
 
-/* ── Diagnostic Settings (platform logs → storage) ────────────────── */
+/* ── Diagnostic Settings (Function-App ➜ storage) ────────────────── */
 resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: '${schedFuncName}-diag'
+  name:  '${schedFuncName}-diag'
   scope: schedFunc
   properties: {
     storageAccountId: schedStorage.id
@@ -177,14 +177,7 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
           days:    7
         }
       }
-      {
-        category: 'AppServiceHTTPLogs'
-        enabled:  true
-        retentionPolicy: {
-          enabled: true
-          days:    7
-        }
-      }
+      // removed unsupported AppServiceHTTPLogs category
     ]
     metrics: [
       {
@@ -197,12 +190,9 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
       }
     ]
   }
-  dependsOn: [
-    schedFunc
-  ]
 }
 
-/* ── Outputs (consumed by GitHub Actions) ─────────────────────────── */
+/* ── Outputs (consumed by GitHub Actions) ────────────────────────── */
 output cosmosAccountName     string = cosmosAccountName
 output schedulerFunctionName string = schedFuncName
 output schedulerStorageName  string = schedStorageName
