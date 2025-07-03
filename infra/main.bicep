@@ -8,7 +8,7 @@ param location string = resourceGroup().location
 param planSkuName string = 'S1'
 
 @description('Container start-up grace period for the **web-app** (sec, max 1800)')
-param timeout int = 1800          // int (not string)
+param timeout int = 1800
 
 /* ────────────────────────────────────────────────────────────────
    TEST stack – every resource carries the “-test” prefix
@@ -19,10 +19,10 @@ var planName           = '${appName}-plan'
 var cosmosAccountName  = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id),0,6)}'
 
 /* ===== NEW – Durable Scheduler vars ================================= */
-var schedFuncName      = 'cursus-test-sched'
-var schedStorageName   = '${toLower(replace(schedFuncName, '-', ''))}sa${substring(uniqueString(resourceGroup().id),0,6)}'
+var schedFuncName    = 'cursus-test-sched'
+var schedStorageName = '${toLower(replace(schedFuncName, '-', ''))}sa${substring(uniqueString(resourceGroup().id),0,6)}'
 
-/* ── App-Service Plan (shared by web-app & scheduler) ─────────────── */
+/* ── App-Service Plan (shared) ────────────────────────────────────── */
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name:     planName
   location: location
@@ -31,7 +31,9 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
     tier: startsWith(planSkuName, 'S') ? 'Standard' : 'Basic'
   }
   kind: 'linux'
-  properties: { reserved: true }
+  properties: {
+    reserved: true
+  }
 }
 
 /* ── Cosmos DB (SQL API) ──────────────────────────────────────────── */
@@ -95,7 +97,9 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       ]
     }
   }
-  dependsOn: [ cosmosContainer ]   // explicit for clarity
+  dependsOn: [
+    cosmosContainer          // explicit for clarity
+  ]
 }
 
 /* ====================================================================
@@ -111,9 +115,9 @@ resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     name: 'Standard_LRS'
   }
   properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    enableHttpsTrafficOnly: true
+    minimumTlsVersion:        'TLS1_2'
+    allowBlobPublicAccess:    false
+    supportsHttpsTrafficOnly: true   // ← fixed property name
   }
 }
 
@@ -128,35 +132,33 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   kind: 'functionapp,linux'
   identity: { type: 'SystemAssigned' }
   properties: {
-    httpsOnly: true
-    serverFarmId: plan.id        // ← re-use existing plan (no extra cost)
+    httpsOnly:   true
+    serverFarmId: plan.id    // reuse existing plan
     siteConfig: {
       linuxFxVersion: 'Python|3.9'
       appSettings: [
-        // -- Core runtime --
-        { name: 'FUNCTIONS_WORKER_RUNTIME',                       value: 'python' }
-        { name: 'FUNCTIONS_EXTENSION_VERSION',                    value: '~4' }
-        { name: 'WEBSITE_RUN_FROM_PACKAGE',                       value: '1' }
-        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',            value: 'true' }
+        { name: 'FUNCTIONS_WORKER_RUNTIME',                 value: 'python' }
+        { name: 'FUNCTIONS_EXTENSION_VERSION',              value: '~4' }
+        { name: 'WEBSITE_RUN_FROM_PACKAGE',                 value: '1' }
+        { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',      value: 'true' }
 
-        // -- Durable Functions storage --
-        { name: 'AzureWebJobsStorage',                            value: schedStorageConnection }
-        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING',       value: schedStorageConnection }
-        { name: 'WEBSITE_CONTENTSHARE',                           value: toLower(schedFuncName) }
+        // Durable Functions storage
+        { name: 'AzureWebJobsStorage',                      value: schedStorageConnection }
+        { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: schedStorageConnection }
+        { name: 'WEBSITE_CONTENTSHARE',                     value: toLower(schedFuncName) }
 
-        // -- Upstream Cosmos settings --
-        { name: 'COSMOS_ENDPOINT',                                value: cosmos.properties.documentEndpoint }
-        { name: 'COSMOS_DATABASE',                                value: 'cursusdb' }
-        { name: 'COSMOS_CONTAINER',                               value: 'jsonContainer' }
+        // Upstream Cosmos settings
+        { name: 'COSMOS_ENDPOINT',                          value: cosmos.properties.documentEndpoint }
+        { name: 'COSMOS_DATABASE',                          value: 'cursusdb' }
+        { name: 'COSMOS_CONTAINER',                         value: 'jsonContainer' }
 
-        // -- Diagnostics & log level --
-        { name: 'APP_LOG_LEVEL',                                  value: 'Information' }
+        // Diagnostics
+        { name: 'APP_LOG_LEVEL',                            value: 'Information' }
       ]
     }
   }
   dependsOn: [
-    schedStorage,
-    cosmosContainer
+    cosmosContainer          // storage dependency implicit via app-settings
   ]
 }
 
@@ -168,16 +170,16 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
     storageAccountId: schedStorage.id
     logs: [
       {
-        category:      'FunctionAppLogs'
-        enabled:       true
+        category: 'FunctionAppLogs'
+        enabled:  true
         retentionPolicy: {
           enabled: true
           days:    7
         }
       }
       {
-        category:      'AppServiceHTTPLogs'
-        enabled:       true
+        category: 'AppServiceHTTPLogs'
+        enabled:  true
         retentionPolicy: {
           enabled: true
           days:    7
@@ -186,8 +188,8 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
     ]
     metrics: [
       {
-        category:      'AllMetrics'
-        enabled:       true
+        category: 'AllMetrics'
+        enabled:  true
         retentionPolicy: {
           enabled: false
           days:    0
@@ -195,10 +197,12 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
       }
     ]
   }
-  dependsOn: [ schedFunc ]
+  dependsOn: [
+    schedFunc
+  ]
 }
 
 /* ── Outputs (consumed by GitHub Actions) ─────────────────────────── */
-output cosmosAccountName       string = cosmosAccountName
-output schedulerFunctionName   string = schedFuncName
-output schedulerStorageName    string = schedStorageName
+output cosmosAccountName     string = cosmosAccountName
+output schedulerFunctionName string = schedFuncName
+output schedulerStorageName  string = schedStorageName
