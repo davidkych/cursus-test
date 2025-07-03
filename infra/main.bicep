@@ -22,7 +22,7 @@ var cosmosAccountName = '${toLower(replace(appName, '-', ''))}${substring(unique
 var schedFuncName    = 'cursus-test-sched'
 var schedStorageName = '${toLower(replace(schedFuncName, '-', ''))}sa${substring(uniqueString(resourceGroup().id),0,6)}'
 
-/* ── App-Service Plan (shared) ───────────────────────────────────── */
+/* ── App-Service Plan (shared) ──────────────────────────────────── */
 resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   name:     planName
   location: location
@@ -36,7 +36,7 @@ resource plan 'Microsoft.Web/serverfarms@2022-09-01' = {
   }
 }
 
-/* ── Cosmos DB (SQL API) ─────────────────────────────────────────── */
+/* ── Cosmos DB (SQL API) ────────────────────────────────────────── */
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   name:     cosmosAccountName
   location: location
@@ -76,7 +76,7 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-/* ── Web-App (FastAPI) ───────────────────────────────────────────── */
+/* ── Web-App (FastAPI) ──────────────────────────────────────────── */
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -117,11 +117,11 @@ resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   properties: {
     minimumTlsVersion:        'TLS1_2'
     allowBlobPublicAccess:    false
-    supportsHttpsTrafficOnly: true   // property name correct for 2023-01-01 API
+    supportsHttpsTrafficOnly: true
   }
 }
 
-/* Build connection string for app-settings (lint-preferred syntax) */
+/* Connection string for Function-App settings */
 var schedStorageKey        = schedStorage.listKeys().keys[0].value
 var schedStorageConnection = 'DefaultEndpointsProtocol=https;AccountName=${schedStorage.name};AccountKey=${schedStorageKey};EndpointSuffix=${environment().suffixes.storage}'
 
@@ -133,7 +133,7 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   identity: { type: 'SystemAssigned' }
   properties: {
     httpsOnly:   true
-    serverFarmId: plan.id            // reuse shared plan
+    serverFarmId: plan.id
     siteConfig: {
       linuxFxVersion: 'Python|3.9'
       appSettings: [
@@ -142,17 +142,16 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'WEBSITE_RUN_FROM_PACKAGE',                 value: '1' }
         { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',      value: 'true' }
 
-        // Durable storage
+        /* Durable storage */
         { name: 'AzureWebJobsStorage',                      value: schedStorageConnection }
         { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: schedStorageConnection }
         { name: 'WEBSITE_CONTENTSHARE',                     value: toLower(schedFuncName) }
 
-        // Cosmos settings
+        /* Cosmos settings */
         { name: 'COSMOS_ENDPOINT',                          value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE',                          value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                         value: 'jsonContainer' }
 
-        // Diagnostics level
         { name: 'APP_LOG_LEVEL',                            value: 'Information' }
       ]
     }
@@ -162,7 +161,7 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   ]
 }
 
-/* ── Diagnostic Settings (Function-App ➜ storage) ────────────────── */
+/* ── Diagnostic Settings (Function-App ➜ Storage) ────────────────── */
 resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name:  '${schedFuncName}-diag'
   scope: schedFunc
@@ -172,27 +171,18 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
       {
         category: 'FunctionAppLogs'
         enabled:  true
-        retentionPolicy: {
-          enabled: true
-          days:    7
-        }
       }
-      // removed unsupported AppServiceHTTPLogs category
     ]
     metrics: [
       {
         category: 'AllMetrics'
         enabled:  true
-        retentionPolicy: {
-          enabled: false
-          days:    0
-        }
       }
     ]
   }
 }
 
-/* ── Outputs (consumed by GitHub Actions) ────────────────────────── */
+/* ── Outputs (for GitHub Actions) ────────────────────────────────── */
 output cosmosAccountName     string = cosmosAccountName
 output schedulerFunctionName string = schedFuncName
 output schedulerStorageName  string = schedStorageName
