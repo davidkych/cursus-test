@@ -26,8 +26,8 @@ jobs:
     runs-on: ubuntu-latest
 
     outputs:
-      cosmos:      ${{ steps.infra.outputs.cosmos }}
-      sched_func:  ${{ steps.infra.outputs.sched_func }}
+      cosmos:     ${{ steps.infra.outputs.cosmos }}
+      sched_func: ${{ steps.infra.outputs.sched_func }}
 
     steps:
     # 1 ▸ checkout & toolchain -----------------------------------------------
@@ -38,7 +38,7 @@ jobs:
         python-version: "3.9"
         cache: pip
 
-    # 2 ▸ vendor deps (binary wheels only – avoids local GLIBC links) ---------
+    # 2 ▸ vendor deps ---------------------------------------------------------
     - name: Vendor deps
       run: |
         pip install --upgrade pip
@@ -65,24 +65,21 @@ jobs:
           --template-file infra/main.bicep \
           --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
 
-        # ── capture outputs for later jobs ─────────────────────────────
         COSMOS=$(az deployment group show \
                    -g $RG -n $DEPLOY_NAME \
                    --query "properties.outputs.cosmosAccountName.value" -o tsv)
-
         SCHED_FUNC=$(az deployment group show \
                        -g $RG -n $DEPLOY_NAME \
                        --query "properties.outputs.schedulerFunctionName.value" -o tsv)
 
-        echo "COSMOS=$COSMOS"           >> $GITHUB_ENV
-        echo "SCHED_FUNC=$SCHED_FUNC"   >> $GITHUB_ENV
-
-        echo "cosmos=$COSMOS"           >> $GITHUB_OUTPUT
-        echo "sched_func=$SCHED_FUNC"   >> $GITHUB_OUTPUT
+        echo "COSMOS=$COSMOS"         >> $GITHUB_ENV
+        echo "SCHED_FUNC=$SCHED_FUNC" >> $GITHUB_ENV
+        echo "cosmos=$COSMOS"         >> $GITHUB_OUTPUT
+        echo "sched_func=$SCHED_FUNC" >> $GITHUB_OUTPUT
 
         echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED_FUNC"
 
-    # 5 ▸ grant **data-plane** role to the Web-App MSI ------------------------
+    # 5 ▸ grant data-plane role to the Web-App MSI ----------------------------
     - name: Grant Cosmos “Built-in Data Contributor” role (web-app)
       run: |
         set -eo pipefail
@@ -154,9 +151,9 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      COSMOS:      ${{ needs.deploy.outputs.cosmos }}
-      SCHED_FUNC:  ${{ needs.deploy.outputs.sched_func }}
-      # inherit RG, APP, LOCATION from top-level env
+      COSMOS:     ${{ needs.deploy.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.deploy.outputs.sched_func }}
+      # inherits RG / APP / LOCATION
 
     steps:
     # 1 ▸ checkout & toolchain -----------------------------------------------
@@ -184,8 +181,9 @@ jobs:
         popd
         echo "📦 scheduler zip size: $(du -h sched.zip | cut -f1)"
 
+        # use --src (not --src-path) – Azure CLI v2.61+
         az functionapp deployment source config-zip \
-          -g $RG -n $SCHED_FUNC --src-path sched.zip
+          -g $RG -n $SCHED_FUNC --src sched.zip
 
         echo "🚀 scheduler deployed – tailing log 60 s …"
         timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
