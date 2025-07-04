@@ -1,3 +1,4 @@
+# ── src/scheduler_fapp/schedule_starter/init.py ───────────────────────
 import azure.functions as func
 import azure.durable_functions as df
 import json
@@ -9,26 +10,34 @@ from utils import parse_hkt_to_utc, log_to_api   # shared module
 
 def _make_location_header(instance_id: str) -> str:
     """
-    Build the public Durable-Functions status URL for `instance_id`.
+    Build a *public* status-polling URL for the given `instance_id`.
+
+    On the combination azure-functions==1.20.0 × durable==1.2.6
+    `req.url` sometimes resolves to an **async coroutine**, causing  
+    `TypeError: replace() argument 2 must be str, not coroutine`.
+
+    The workaround is to reconstruct the base URL from the
+    `WEBSITE_SITE_NAME` environment variable that is always present
+    inside an App-Service / Function-App container.
     """
-    site_name = os.getenv("WEBSITE_SITE_NAME", "")
+    site_name = os.getenv("WEBSITE_SITE_NAME", "")   # e.g. cursus-test-sched
     base = f"https://{site_name}.azurewebsites.net" if site_name else "http://localhost:7071"
     return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}"
 
 
-# ──────────────────────────────────────────────────────────────────────
-# MAIN ENTRY-POINT  (now **async** so we can await Durable SDK calls)
-# ----------------------------------------------------------------------
-async def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
+def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
     """
-    HTTP entry-point that schedules an orchestration and returns **202 Accepted**.
-    Implements a manual response to work around coroutine → str bugs in the
-    SDK helpers.
+    HTTP entry-point that kicks off the orchestration **without using**
+    `create_check_status_response`, which currently crashes because of
+    the coroutine/replace bug mentioned above.
+
+    NOTE: Must remain **synchronous** – async entry-points are not
+    supported by the in-proc Python worker used by Durable Functions.
     """
     try:
         logging.info("↪ /schedule called")
 
-        # ── payload parsing & validation ───────────────────────────────
+        # ── payload parsing & validation ──────────────────────────────
         try:
             body = req.get_json()
         except ValueError:
@@ -61,11 +70,9 @@ async def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noq
             "payload": body["payload"],
         }
 
-        # ── create orchestration (await!) ──────────────────────────────
+        # ── create orchestration (sync) ───────────────────────────────
         client = df.DurableOrchestrationClient(starter)
-        instance_id: str = await client.start_new(      # <- WAS sync call
-            "schedule_orchestrator", None, orch_input
-        )
+        instance_id = client.start_new("schedule_orchestrator", None, orch_input)
         logging.info("🎬 Started orchestration %s", instance_id)
 
         log_to_api(
@@ -74,19 +81,16 @@ async def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noq
             f"(instance {instance_id})",
         )
 
-        # ── manual 202 Accepted response ──────────────────────────────
+        # ── manual 202 Accepted response (work-around) ───────────────
         location = _make_location_header(instance_id)
         return func.HttpResponse(
             json.dumps({"id": instance_id}),
             status_code=202,
             mimetype="application/json",
-            headers={
-                "Location": location,
-                "Retry-After": "5",
-            },
+            headers={"Location": location, "Retry-After": "5"},
         )
 
-    # ── generic diagnostics ───────────────────────────────────────────
+    # ── generic diagnostics ──────────────────────────────────────────
     except Exception as exc:  # noqa: BLE001
         logging.exception("Unhandled error in /schedule")
         return func.HttpResponse(
