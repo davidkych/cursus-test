@@ -127,51 +127,76 @@ def _forward_error(resp: requests.Response) -> None:
     summary="Create a new schedule",
 )
 def create_schedule(req: ScheduleRequest):
-    url = f"{_scheduler_base()}/schedule"
-    _log.info("Forwarding schedule request → %s", url)
+    """
+    Forwards the request to the scheduler Function-App.
 
-    try:
-        for attempt in (1, 2):
-            try:
-                resp = requests.post(url, json=req.model_dump(), timeout=30)
-                break
-            except requests.Timeout:
-                _log.warning("scheduler timeout (attempt %s)", attempt)
-        else:  # pragma: no cover
-            raise requests.Timeout("scheduler unreachable (30 s × 2)")
-    except Exception as exc:  # noqa: BLE001
-        _log.exception("Unable to reach scheduler")
-        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    Azure Functions prepend **/api** by default; if the host has
+    `routePrefix=''` we quietly fall back to `/schedule`.
+    """
+    payload = req.model_dump()
+    tried_resp: requests.Response | None = None
 
-    if resp.status_code not in (200, 202):
-        _forward_error(resp)
+    # Try the canonical “/api/schedule” first, then fall back to “/schedule”.
+    for path in ("/api/schedule", "/schedule"):
+        url = f"{_scheduler_base()}{path}"
+        _log.info("Forwarding schedule request → %s", url)
 
-    instance_id: str | None = None
-    try:
-        instance_id = resp.json().get("id")
-    except ValueError:
-        pass
+        # Retry once on timeout to cope with cold-start delays.
+        try:
+            for attempt in (1, 2):
+                try:
+                    resp = requests.post(url, json=payload, timeout=30)
+                    break
+                except requests.Timeout:
+                    _log.warning("Scheduler timeout (attempt %s) for %s", attempt, url)
+            else:  # pragma: no cover
+                raise requests.Timeout("Scheduler unreachable (30 s × 2)")
+        except Exception as exc:  # noqa: BLE001
+            _log.exception("Unable to reach scheduler")
+            raise HTTPException(status_code=504, detail=str(exc)) from exc
 
-    if not instance_id:
-        loc = resp.headers.get("Location") or resp.headers.get("location")
-        if loc and "/instances/" in loc:
-            instance_id = loc.split("/instances/")[-1].split("?")[0]
+        # If we get 404, remember the response and try the next path.
+        if resp.status_code == 404:
+            _log.debug("Scheduler path %s returned 404 – trying alternative", path)
+            tried_resp = resp
+            continue
 
-    if not instance_id:
-        _log.error(
-            "Unable to extract instance-id – status=%s, text=%s",
-            resp.status_code,
-            (resp.text or "")[:200],
-        )
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "error": "Scheduler response missing instance-id",
-                "raw": resp.text,
-            },
-        )
+        # Any other non-success status ⇒ propagate detailed error.
+        if resp.status_code not in (200, 202):
+            _forward_error(resp)
 
-    return ScheduleResponse(transaction_id=instance_id)
+        # ── extract Durable instance-id ───────────────────────────────
+        instance_id: str | None = None
+        try:
+            instance_id = resp.json().get("id")
+        except ValueError:
+            pass
+
+        if not instance_id:
+            loc = resp.headers.get("Location") or resp.headers.get("location")
+            if loc and "/instances/" in loc:
+                instance_id = loc.split("/instances/")[-1].split("?")[0]
+
+        if not instance_id:
+            _log.error(
+                "Unable to extract instance-id – status=%s, text=%s",
+                resp.status_code,
+                (resp.text or "")[:200],
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "Scheduler response missing instance-id",
+                    "raw": resp.text,
+                },
+            )
+
+        return ScheduleResponse(transaction_id=instance_id)
+
+    # All paths exhausted – bubble up the last 404 so clients see why.
+    if tried_resp is not None:
+        _forward_error(tried_resp)
+    raise HTTPException(status_code=502, detail="Scheduler endpoint not found")
 
 
 @router.get(
