@@ -9,30 +9,21 @@ from utils import parse_hkt_to_utc, log_to_api   # shared module
 
 def _make_location_header(instance_id: str) -> str:
     """
-    Build a *public* status-polling URL for the given `instance_id`.
-
-    We cannot rely on `req.url` because with the combination
-    *azure-functions 1.20.0* ✕ *durable 1.2.6* the property resolves to an
-    **async coroutine** – leading to  
-    `TypeError: replace() argument 2 must be str, not coroutine`.
-
-    Instead, we reconstruct the base URL from `WEBSITE_SITE_NAME`, which is
-    always present in an App Service / Function-App container.
+    Build the public Durable-Functions status URL for `instance_id`.
     """
-    site_name = os.getenv("WEBSITE_SITE_NAME", "")           # e.g. cursus-test-sched
-    if site_name:                                           # production / test
-        base = f"https://{site_name}.azurewebsites.net"
-    else:                                                   # local development
-        base = "http://localhost:7071"
-
+    site_name = os.getenv("WEBSITE_SITE_NAME", "")
+    base = f"https://{site_name}.azurewebsites.net" if site_name else "http://localhost:7071"
     return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}"
 
 
-def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
+# ──────────────────────────────────────────────────────────────────────
+# MAIN ENTRY-POINT  (now **async** so we can await Durable SDK calls)
+# ----------------------------------------------------------------------
+async def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
     """
-    HTTP entry-point that kicks off the orchestration **without using**
-    `create_check_status_response`, which currently crashes due to the
-    coroutine/replace bug.
+    HTTP entry-point that schedules an orchestration and returns **202 Accepted**.
+    Implements a manual response to work around coroutine → str bugs in the
+    SDK helpers.
     """
     try:
         logging.info("↪ /schedule called")
@@ -70,9 +61,11 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             "payload": body["payload"],
         }
 
-        # ── create orchestration ───────────────────────────────────────
+        # ── create orchestration (await!) ──────────────────────────────
         client = df.DurableOrchestrationClient(starter)
-        instance_id = client.start_new("schedule_orchestrator", None, orch_input)
+        instance_id: str = await client.start_new(      # <- WAS sync call
+            "schedule_orchestrator", None, orch_input
+        )
         logging.info("🎬 Started orchestration %s", instance_id)
 
         log_to_api(
@@ -81,7 +74,7 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             f"(instance {instance_id})",
         )
 
-        # ── manual 202 Accepted response (work-around) ─────────────────
+        # ── manual 202 Accepted response ──────────────────────────────
         location = _make_location_header(instance_id)
         return func.HttpResponse(
             json.dumps({"id": instance_id}),
