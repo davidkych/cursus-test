@@ -1,10 +1,6 @@
 # ── src/routers/schedule/endpoints.py ─────────────────────────────────
 """
 /api/schedule – façade in front of the Durable-scheduler Function-App.
-
-POST    /api/schedule                       → create a new schedule
-GET     /api/schedule/{id}/status           → query runtime status
-DELETE  /api/schedule/{id}                  → cancel / terminate a schedule
 """
 from __future__ import annotations
 
@@ -46,37 +42,30 @@ _base_cache: str | None = None               # resolved once, reused thereafter
 
 def _scheduler_base() -> str:
     """
-    Resolve the Function-App base URL with robust fallbacks:
+    Resolve the Function-App base URL with robust fallbacks.
 
-    1. `SCHEDULER_BASE_URL` – *unless* it still points to a local host/dev port.
-       Trailing “/api” (often added accidentally) is stripped.
-    2. `SCHEDULER_FUNCTION_NAME` – converted into
-       “https://<name>.azurewebsites.net”.
-    3. Local development default → http://localhost:7071
+    1. `SCHEDULER_BASE_URL` – unless it points to localhost / dev.
+    2. `SCHEDULER_FUNCTION_NAME` – → https://<name>.azurewebsites.net
+    3. localhost default.
     """
     global _base_cache
     if _base_cache:
-        return _base_cache                               # fast path
+        return _base_cache
 
     base = os.getenv("SCHEDULER_BASE_URL", "").rstrip("/")
 
-    # • strip a stray “/api” suffix
+    # strip accidental “/api”
     if base.endswith("/api"):
         base = base[:-4]
 
-    # • ignore obviously local/dev hosts
     if base and not base.startswith(("http://localhost", "http://127.0.0.1")):
         _base_cache = base
-        _log.debug("Using SCHEDULER_BASE_URL=%s", _base_cache)
         return _base_cache
 
-    # fallback ➜ derive from the plain Function-App name
     if fn := os.getenv("SCHEDULER_FUNCTION_NAME"):
         _base_cache = f"https://{fn}.azurewebsites.net"
-        _log.debug("Using SCHEDULER_FUNCTION_NAME → %s", _base_cache)
         return _base_cache
 
-    # last-ditch – dev workflow
     _base_cache = "http://localhost:7071"
     _log.warning("Scheduler base unresolved – falling back to %s", _base_cache)
     return _base_cache
@@ -102,23 +91,45 @@ def _terminate_url(instance_id: str) -> str:
 
 
 def _forward_error(resp: requests.Response) -> None:
-    """Mirror the scheduler’s failure payload back to the caller."""
+    """
+    Mirror the scheduler’s failure payload back to the caller **with context**,
+    so callers can see *why* the Function-App rejected the request.
+    """
     try:
-        detail = resp.json()
+        raw_detail = resp.json()
     except ValueError:
-        detail = resp.text or "scheduler error"
+        raw_detail = resp.text or f"HTTP {resp.status_code} with empty body"
+
+    detail = {
+        "scheduler_status": resp.status_code,
+        "scheduler_body": raw_detail,
+        "scheduler_headers": {
+            k: v
+            for k, v in resp.headers.items()
+            if k.lower()
+            in (
+                "content-type",
+                "x-functions-execution-id",
+                "retry-after",
+                "durable-functions-instance-id",
+            )
+        },
+    }
     raise HTTPException(status_code=resp.status_code, detail=detail)
 
 
 # ──────────────────────────────────────────────────────────────────────
 # routes
 # ----------------------------------------------------------------------
-@router.post("/api/schedule", response_model=ScheduleResponse, summary="Create a new schedule")
+@router.post(
+    "/api/schedule",
+    response_model=ScheduleResponse,
+    summary="Create a new schedule",
+)
 def create_schedule(req: ScheduleRequest):
-    url = f"{_scheduler_base()}/schedule"            # note: Function route is /schedule
+    url = f"{_scheduler_base()}/schedule"
     _log.info("Forwarding schedule request → %s", url)
 
-    # — call the Function-App (retry once to soften cold-start hiccups) —
     try:
         for attempt in (1, 2):
             try:
@@ -126,16 +137,15 @@ def create_schedule(req: ScheduleRequest):
                 break
             except requests.Timeout:
                 _log.warning("scheduler timeout (attempt %s)", attempt)
-        else:                                         # pragma: no cover
+        else:  # pragma: no cover
             raise requests.Timeout("scheduler unreachable (30 s × 2)")
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         _log.exception("Unable to reach scheduler")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
-    if resp.status_code not in (200, 202):            # non-success? proxy back
+    if resp.status_code not in (200, 202):
         _forward_error(resp)
 
-    # — extract `instance-id` (body *or* Location header) —
     instance_id: str | None = None
     try:
         instance_id = resp.json().get("id")
@@ -149,25 +159,31 @@ def create_schedule(req: ScheduleRequest):
 
     if not instance_id:
         _log.error(
-            "Unable to extract instance-id – status=%s, headers=%s, text=%s",
+            "Unable to extract instance-id – status=%s, text=%s",
             resp.status_code,
-            {k: v for k, v in resp.headers.items() if k.lower() in ("location", "retry-after")},
             (resp.text or "")[:200],
         )
-        raise HTTPException(status_code=502, detail="Scheduler response missing instance-id")
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "Scheduler response missing instance-id",
+                "raw": resp.text,
+            },
+        )
 
-    _log.info("Scheduled instance %s", instance_id)
     return ScheduleResponse(transaction_id=instance_id)
 
 
-@router.get("/api/schedule/{transaction_id}/status", summary="Fetch Durable runtime status")
+@router.get(
+    "/api/schedule/{transaction_id}/status",
+    summary="Fetch Durable runtime status",
+)
 def get_schedule_status(transaction_id: str):
     url = _status_url(transaction_id)
-    _log.debug("Status poll → %s", url)
 
     try:
         resp = requests.get(url, timeout=15)
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         _log.exception("Scheduler unreachable")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -178,22 +194,25 @@ def get_schedule_status(transaction_id: str):
     _forward_error(resp)
 
 
-@router.delete("/api/schedule/{transaction_id}",
-               status_code=204,
-               summary="Terminate a pending schedule")
+@router.delete(
+    "/api/schedule/{transaction_id}",
+    status_code=204,
+    summary="Terminate a pending schedule",
+)
 def delete_schedule(transaction_id: str):
     url = _terminate_url(transaction_id)
-    _log.info("Terminate %s → %s", transaction_id, url)
 
     try:
         resp = requests.post(url, timeout=15)
-    except Exception as exc:                          # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         _log.exception("Scheduler unreachable")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
     if resp.status_code in (202, 204):
         return
     if resp.status_code == 404:
-        raise HTTPException(status_code=404,
-                            detail="Transaction not found / already completed")
+        raise HTTPException(
+            status_code=404,
+            detail="Transaction not found / already completed",
+        )
     _forward_error(resp)
