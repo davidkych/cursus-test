@@ -73,8 +73,11 @@ def _scheduler_base() -> str:
 
 
 def _mgmt_key_qs() -> str:
-    return f"&code={os.getenv('SCHEDULER_MGMT_KEY')}" if os.getenv("SCHEDULER_MGMT_KEY") else ""
-
+    """
+    Build “&code=…” query-string segment only when a **non-empty** key is present.
+    """
+    key = (os.getenv("SCHEDULER_MGMT_KEY") or "").strip()
+    return f"&code={key}" if key else ""
 
 def _status_url(instance_id: str) -> str:
     qs = _mgmt_key_qs().lstrip("&")

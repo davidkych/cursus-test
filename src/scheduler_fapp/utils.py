@@ -26,23 +26,26 @@ _MIN_LEAD = 60   # seconds – must schedule ≥ 1 min ahead
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
-    Convert a *naive* ISO-8601 string (assumed HKT) into a **UTC** ISO string.
-    Raises ValueError on bad format or if < 60 s in the future.
+    Convert a *naive* ISO-8601 string (assumed HKT) into a **naïve UTC** ISO string
+    **without** the “+00:00” offset.  Raises ValueError on bad format or if the
+    target time is < 60 s in the future.
     """
     try:
-        hkt_dt = datetime.fromisoformat(exec_at_str)
-    except ValueError as exc:                         # noqa: BLE001
+        hkt_dt = datetime.fromisoformat(exec_at_str)           # naive
+    except ValueError as exc:
         raise ValueError("`exec_at` must be an ISO-8601 datetime "
                          "(YYYY-MM-DDThh:mm)") from exc
 
-    # Force the timestamp into HKT
+    # Attach HKT zone and convert to UTC
     if hkt_dt.tzinfo is None:
         hkt_dt = hkt_dt.replace(tzinfo=_HKT)
     else:
         hkt_dt = hkt_dt.astimezone(_HKT)
 
-    utc_dt = hkt_dt.astimezone(timezone.utc)
-    if (utc_dt - datetime.now(timezone.utc)).total_seconds() < _MIN_LEAD:
+    utc_dt = hkt_dt.astimezone(timezone.utc).replace(tzinfo=None)  # ‹naïve› UTC
+
+    now_naive_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    if (utc_dt - now_naive_utc).total_seconds() < _MIN_LEAD:
         raise ValueError("`exec_at` must be at least 60 seconds in the future")
 
     return utc_dt.isoformat(timespec="seconds")
