@@ -83,7 +83,8 @@ def _forward_error(resp: requests.Response) -> None:
 # ----------------------------------------------------------------------
 @router.post("/api/schedule", response_model=ScheduleResponse, summary="Create a new schedule")
 def create_schedule(req: ScheduleRequest):
-    url = f"{_scheduler_base()}/api/schedule"
+    # NOTE: the Function-App route is **/schedule** (no /api prefix)
+    url = f"{_scheduler_base()}/schedule"
     _log.info("Forwarding schedule request → %s", url)
 
     # — call the Function-App (retry once to soften cold-start hiccups) —
@@ -113,7 +114,6 @@ def create_schedule(req: ScheduleRequest):
         pass
 
     if not instance_id:
-        # Durable Functions v4 may omit the body but always returns Location
         loc = resp.headers.get("Location") or resp.headers.get("location")
         if loc and "/instances/" in loc:
             instance_id = loc.split("/instances/")[-1].split("?")[0]
@@ -149,8 +149,11 @@ def get_schedule_status(transaction_id: str):
     _forward_error(resp)
 
 
-@router.delete("/api/schedule/{transaction_id}", status_code=204,
-               summary="Terminate a pending schedule")
+@router.delete(
+    "/api/schedule/{transaction_id}",
+    status_code=204,
+    summary="Terminate a pending schedule",
+)
 def delete_schedule(transaction_id: str):
     url = _terminate_url(transaction_id)
     _log.info("Terminate %s → %s", transaction_id, url)
@@ -162,7 +165,9 @@ def delete_schedule(transaction_id: str):
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
     if resp.status_code in (202, 204):
-        return                                  # OK
+        return
     if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail="Transaction not found / already completed")
+        raise HTTPException(
+            status_code=404, detail="Transaction not found / already completed"
+        )
     _forward_error(resp)
