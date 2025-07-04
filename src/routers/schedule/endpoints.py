@@ -64,9 +64,11 @@ def _mgmt_key_qs() -> str:
 
 
 def _status_url(instance_id: str) -> str:
+    qs = _mgmt_key_qs()
+    # only prefix “?” when we actually have a query-string
     return (
         f"{_scheduler_base()}/runtime/webhooks/durabletask"
-        f"/instances/{instance_id}?{_mgmt_key_qs().lstrip('&')}"
+        f"/instances/{instance_id}{'?' + qs.lstrip('&') if qs else ''}"
     )
 
 
@@ -89,11 +91,7 @@ def _forward_error(resp: requests.Response) -> None:
 # ──────────────────────────────────────────────────────────────────────
 # routes
 # ----------------------------------------------------------------------
-@router.post(
-    "/api/schedule",
-    response_model=ScheduleResponse,
-    summary="Create a new schedule",
-)
+@router.post("/api/schedule", response_model=ScheduleResponse, summary="Create a new schedule")
 def create_schedule(req: ScheduleRequest):
     url = f"{_scheduler_base()}/api/schedule"
     _log.info("Forwarding schedule request → %s", url)
@@ -124,10 +122,7 @@ def create_schedule(req: ScheduleRequest):
     return ScheduleResponse(transaction_id=body["id"])
 
 
-@router.get(
-    "/api/schedule/{transaction_id}/status",
-    summary="Fetch Durable runtime status for a schedule",
-)
+@router.get("/api/schedule/{transaction_id}/status", summary="Fetch Durable runtime status")
 def get_schedule_status(transaction_id: str):
     url = _status_url(transaction_id)
     _log.debug("Status poll → %s", url)
@@ -144,11 +139,8 @@ def get_schedule_status(transaction_id: str):
     _forward_error(resp)
 
 
-@router.delete(
-    "/api/schedule/{transaction_id}",
-    status_code=204,
-    summary="Terminate a pending schedule",
-)
+@router.delete("/api/schedule/{transaction_id}", status_code=204,
+               summary="Terminate a pending schedule")
 def delete_schedule(transaction_id: str):
     url = _terminate_url(transaction_id)
     _log.info("Terminate %s → %s", transaction_id, url)
@@ -160,7 +152,7 @@ def delete_schedule(transaction_id: str):
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
     if resp.status_code in (202, 204):
-        return  # done
+        return  # OK
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Transaction not found / already completed")
     _forward_error(resp)
