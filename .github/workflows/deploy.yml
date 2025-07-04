@@ -233,7 +233,7 @@ jobs:
           echo "💥 Scheduler health check failed after 10 attempts"
           exit 1
 
-      # 5 ▸ grant Cosmos role to scheduler MSI ----------------------------------
+      # 5 ▸ grant Cosmos role to scheduler MSI
       - name: Grant Cosmos role (scheduler MSI)
         run: |
           set -eo pipefail
@@ -246,15 +246,20 @@ jobs:
             --scope "/" || true
           echo "✅ scheduler MSI granted data-plane role"
 
-      # 6 ▸ expose scheduler base URL to web-app --------------------------------
-      - name: Update web-app with SCHEDULER_BASE_URL
+      # 6 ▸ expose scheduler base URL **and host key** to web-app  ← UPDATED
+      - name: Update web-app with scheduler settings
         run: |
+          set -eo pipefail
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
+          # ── pull default *host* key so the web-app can call management APIs
+          host_key=$(az functionapp keys list -g $RG -n $SCHED_FUNC --query "hostKeys.default" -o tsv)
           az webapp config appsettings set -g $RG -n $APP --settings \
-            SCHEDULER_BASE_URL=$sched_base SCHEDULER_FUNCTION_NAME=$SCHED_FUNC
-          echo "🔗 web-app now knows scheduler base $sched_base"
+            SCHEDULER_BASE_URL=$sched_base \
+            SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
+            SCHEDULER_MGMT_KEY=$host_key
+          echo "🔗 web-app now knows scheduler base $sched_base and host-key"
 
-      # 7 ▸ save logs on failure -------------------------------------------------
+      # 7 ▸ save logs on failure
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
