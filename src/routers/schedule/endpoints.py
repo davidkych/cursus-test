@@ -42,13 +42,7 @@ class ScheduleResponse(BaseModel):
 # helpers
 # ----------------------------------------------------------------------
 def _scheduler_base() -> str:
-    """
-    Resolve scheduler host base.
-
-    1.  SCHEDULER_BASE_URL = https://<name>.azurewebsites.net  ← preferred
-    2.  SCHEDULER_FUNCTION_NAME → https://<name>.azurewebsites.net
-    3.  fallback http://localhost:7071           (local `func start`)
-    """
+    """Return https://<scheduler>.azurewebsites.net (or localhost during dev)."""
     if (base := os.getenv("SCHEDULER_BASE_URL")):
         return base.rstrip("/")
     if (fn := os.getenv("SCHEDULER_FUNCTION_NAME")):
@@ -57,33 +51,29 @@ def _scheduler_base() -> str:
 
 
 def _mgmt_key_qs() -> str:
-    """`&code=…` query-string fragment if SCHEDULER_MGMT_KEY is set."""
-    if (key := os.getenv("SCHEDULER_MGMT_KEY")):
-        return f"&code={key}"
-    return ""
+    return f"&code={os.getenv('SCHEDULER_MGMT_KEY')}" if os.getenv("SCHEDULER_MGMT_KEY") else ""
 
 
 def _status_url(instance_id: str) -> str:
-    qs = _mgmt_key_qs()
-    # only prefix “?” when we actually have a query-string
+    qs = _mgmt_key_qs().lstrip("&")
     return (
-        f"{_scheduler_base()}/runtime/webhooks/durabletask"
-        f"/instances/{instance_id}{'?' + qs.lstrip('&') if qs else ''}"
+        f"{_scheduler_base()}/runtime/webhooks/durabletask/instances/{instance_id}"
+        f"{'?' + qs if qs else ''}"
     )
 
 
 def _terminate_url(instance_id: str) -> str:
     return (
-        f"{_scheduler_base()}/runtime/webhooks/durabletask"
-        f"/instances/{instance_id}/terminate?reason=user+cancelled{_mgmt_key_qs()}"
+        f"{_scheduler_base()}/runtime/webhooks/durabletask/instances/"
+        f"{instance_id}/terminate?reason=user+cancelled{_mgmt_key_qs()}"
     )
 
 
 def _forward_error(resp: requests.Response) -> None:
-    """Raise HTTPException mirroring the scheduler’s response."""
+    """Mirror the scheduler’s failure payload back to the caller."""
     try:
         detail = resp.json()
-    except ValueError:  # not JSON
+    except ValueError:
         detail = resp.text or "scheduler error"
     raise HTTPException(status_code=resp.status_code, detail=detail)
 
@@ -96,36 +86,56 @@ def create_schedule(req: ScheduleRequest):
     url = f"{_scheduler_base()}/api/schedule"
     _log.info("Forwarding schedule request → %s", url)
 
+    # — call the Function-App (retry once to soften cold-start hiccups) —
     try:
-        # cold-start can be slow – give it a bit longer & retry once
         for attempt in (1, 2):
             try:
-                resp = requests.post(url, json=req.dict(), timeout=30)
+                resp = requests.post(url, json=req.model_dump(), timeout=30)
                 break
             except requests.Timeout:
                 _log.warning("scheduler timeout (attempt %s)", attempt)
         else:  # pragma: no cover
-            raise requests.Timeout("scheduler unreachable (30 s ×2)")
+            raise requests.Timeout("scheduler unreachable (30 s × 2)")
     except Exception as exc:  # noqa: BLE001
         _log.exception("Unable to reach scheduler")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
+    # — non-success? just proxy back whatever we got —
     if resp.status_code not in (200, 202):
         _forward_error(resp)
 
-    body = resp.json()
-    if "id" not in body:  # defensive
-        _log.error("Unexpected scheduler payload: %s", body)
-        raise HTTPException(status_code=502, detail="Bad scheduler response")
+    # — extract instance-id (body *or* Location header) —
+    instance_id: str | None = None
+    try:
+        body = resp.json()
+        instance_id = body.get("id")
+    except ValueError:  # empty / non-JSON body
+        pass
 
-    _log.info("Scheduled instance %s", body["id"])
-    return ScheduleResponse(transaction_id=body["id"])
+    if not instance_id:
+        # Durable Functions v4 may omit the body but always returns Location
+        loc = resp.headers.get("Location") or resp.headers.get("location")
+        if loc and "/instances/" in loc:
+            instance_id = loc.split("/instances/")[-1].split("?")[0]
+
+    if not instance_id:
+        _log.error(
+            "Unable to extract instance-id – status=%s, headers=%s, text=%s",
+            resp.status_code,
+            {k: v for k, v in resp.headers.items() if k.lower() in ("location", "retry-after")},
+            (resp.text or "")[:200],
+        )
+        raise HTTPException(status_code=502, detail="Scheduler response missing instance-id")
+
+    _log.info("Scheduled instance %s", instance_id)
+    return ScheduleResponse(transaction_id=instance_id)
 
 
 @router.get("/api/schedule/{transaction_id}/status", summary="Fetch Durable runtime status")
 def get_schedule_status(transaction_id: str):
     url = _status_url(transaction_id)
     _log.debug("Status poll → %s", url)
+
     try:
         resp = requests.get(url, timeout=15)
     except Exception as exc:  # noqa: BLE001
@@ -152,7 +162,7 @@ def delete_schedule(transaction_id: str):
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
     if resp.status_code in (202, 204):
-        return  # OK
+        return                                  # OK
     if resp.status_code == 404:
         raise HTTPException(status_code=404, detail="Transaction not found / already completed")
     _forward_error(resp)
