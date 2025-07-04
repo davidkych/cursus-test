@@ -2,21 +2,42 @@ import azure.functions as func
 import azure.durable_functions as df
 import json
 import logging
+import os
 
 from utils import parse_hkt_to_utc, log_to_api   # shared module
 
 
+def _make_location_header(instance_id: str) -> str:
+    """
+    Build a *public* status-polling URL for the given `instance_id`.
+
+    We cannot rely on `req.url` because with the combination
+    *azure-functions 1.20.0* ✕ *durable 1.2.6* the property resolves to an
+    **async coroutine** – leading to  
+    `TypeError: replace() argument 2 must be str, not coroutine`.
+
+    Instead, we reconstruct the base URL from `WEBSITE_SITE_NAME`, which is
+    always present in an App Service / Function-App container.
+    """
+    site_name = os.getenv("WEBSITE_SITE_NAME", "")           # e.g. cursus-test-sched
+    if site_name:                                           # production / test
+        base = f"https://{site_name}.azurewebsites.net"
+    else:                                                   # local development
+        base = "http://localhost:7071"
+
+    return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}"
+
+
 def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
     """
-    HTTP entry-point that kicks off the orchestration.
-
-    On **any** unhandled exception we now return a JSON body with the
-    exception type / message – this is surfaced by the API gateway and
-    greatly speeds up troubleshooting.
+    HTTP entry-point that kicks off the orchestration **without using**
+    `create_check_status_response`, which currently crashes due to the
+    coroutine/replace bug.
     """
     try:
         logging.info("↪ /schedule called")
 
+        # ── payload parsing & validation ───────────────────────────────
         try:
             body = req.get_json()
         except ValueError:
@@ -26,7 +47,6 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
                 mimetype="application/json",
             )
 
-        # ── validation ------------------------------------------------
         missing = [k for k in ("exec_at", "prompt_type", "payload") if k not in body]
         if missing:
             return func.HttpResponse(
@@ -50,7 +70,7 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             "payload": body["payload"],
         }
 
-        # ── start orchestration --------------------------------------
+        # ── create orchestration ───────────────────────────────────────
         client = df.DurableOrchestrationClient(starter)
         instance_id = client.start_new("schedule_orchestrator", None, orch_input)
         logging.info("🎬 Started orchestration %s", instance_id)
@@ -61,20 +81,23 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             f"(instance {instance_id})",
         )
 
-        return client.create_check_status_response(req, instance_id)
+        # ── manual 202 Accepted response (work-around) ─────────────────
+        location = _make_location_header(instance_id)
+        return func.HttpResponse(
+            json.dumps({"id": instance_id}),
+            status_code=202,
+            mimetype="application/json",
+            headers={
+                "Location": location,
+                "Retry-After": "5",
+            },
+        )
 
-    # ────────────────────────────────────────────────────────────────
-    # GENERIC DIAGNOSTICS
-    # ----------------------------------------------------------------
+    # ── generic diagnostics ───────────────────────────────────────────
     except Exception as exc:  # noqa: BLE001
         logging.exception("Unhandled error in /schedule")
         return func.HttpResponse(
-            json.dumps(
-                {
-                    "error": str(exc),
-                    "type": exc.__class__.__name__,
-                }
-            ),
+            json.dumps({"error": str(exc), "type": exc.__class__.__name__}),
             status_code=500,
             mimetype="application/json",
         )
