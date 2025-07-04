@@ -253,21 +253,30 @@ jobs:
 
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
 
-          # Preferred: system key “durableTaskExtension”
-          system_key=$(az functionapp keys list \
-                          -g $RG -n $SCHED_FUNC \
-                          --query "systemKeys.durableTaskExtension" -o tsv)
-
-          # Fallback: master key if system key is empty / not yet generated
-          if [ -z "$system_key" ]; then
-            echo "⚠️ durableTaskExtension key not found – falling back to _master"
+          # ── try up to 6× (≈60 s) to fetch a non-empty Durable system key ──
+          max_tries=6
+          for i in $(seq 1 $max_tries); do
             system_key=$(az functionapp keys list \
                             -g $RG -n $SCHED_FUNC \
-                            --query "hostKeys._master" -o tsv)
-          fi
+                            --query "systemKeys.durableTaskExtension" -o tsv)
+
+            if [ -z "$system_key" ]; then
+              system_key=$(az functionapp keys list \
+                              -g $RG -n $SCHED_FUNC \
+                              --query "hostKeys._master" -o tsv)
+            fi
+
+            if [ -n "$system_key" ]; then
+              echo "✅ management key obtained on try $i"
+              break
+            fi
+
+            echo "🔄 keys not ready yet – try $i/$max_tries, waiting 10 s"
+            sleep 10
+          done
 
           if [ -z "$system_key" ]; then
-            echo "❌ No management key could be retrieved"; exit 1
+            echo "❌ No management key after ${max_tries} attempts"; exit 1
           fi
 
           az webapp config appsettings set \
@@ -276,7 +285,7 @@ jobs:
             SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
             SCHEDULER_MGMT_KEY=$system_key
 
-          echo "🔗 web-app now knows scheduler base $sched_base and a valid management key"
+          echo "🔗 web-app now knows scheduler base $sched_base and valid key"
 
       # 7 ▸ save logs on failure
       - if: failure()
