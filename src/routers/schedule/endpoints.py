@@ -1,4 +1,4 @@
-# ── src/routers/schedule/endpoints.py ─────────────────────────────────
+# ── src/routers/schedule/endpoints.py ────────────────────────────────
 """
 /api/schedule – façade in front of the Durable-scheduler Function-App.
 """
@@ -37,7 +37,7 @@ class ScheduleResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────
 # helpers
 # ----------------------------------------------------------------------
-_base_cache: str | None = None               # resolved once, reused thereafter
+_base_cache: str | None = None                        # resolved once, reused thereafter
 
 
 def _scheduler_base() -> str:
@@ -72,7 +72,11 @@ def _scheduler_base() -> str:
 
 
 def _mgmt_key_qs() -> str:
-    return f"&code={os.getenv('SCHEDULER_MGMT_KEY')}" if os.getenv("SCHEDULER_MGMT_KEY") else ""
+    return (
+        f"&code={os.getenv('SCHEDULER_MGMT_KEY')}"
+        if os.getenv("SCHEDULER_MGMT_KEY")
+        else ""
+    )
 
 
 def _status_url(instance_id: str) -> str:
@@ -127,7 +131,9 @@ def _forward_error(resp: requests.Response) -> None:
     summary="Create a new schedule",
 )
 def create_schedule(req: ScheduleRequest):
-    url = f"{_scheduler_base()}/schedule"
+    # NOTE: the Function-App uses the default `routePrefix = 'api'`
+    #       so the correct URL is **/api/schedule**
+    url = f"{_scheduler_base()}/api/schedule"
     _log.info("Forwarding schedule request → %s", url)
 
     try:
@@ -137,9 +143,9 @@ def create_schedule(req: ScheduleRequest):
                 break
             except requests.Timeout:
                 _log.warning("scheduler timeout (attempt %s)", attempt)
-        else:  # pragma: no cover
+        else:                                              # pragma: no cover
             raise requests.Timeout("scheduler unreachable (30 s × 2)")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:                               # noqa: BLE001
         _log.exception("Unable to reach scheduler")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
