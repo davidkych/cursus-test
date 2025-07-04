@@ -94,6 +94,10 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmos.properties.documentEndpoint }
         { name: 'COSMOS_DATABASE',                     value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                    value: 'jsonContainer' }
+
+        /* ── NEW: expose Durable-scheduler endpoint on first boot ── */
+        { name: 'SCHEDULER_BASE_URL',                  value: 'https://${schedFuncName}.azurewebsites.net' }
+        { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
       ]
     }
   }
