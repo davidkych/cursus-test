@@ -118,6 +118,9 @@ def _forward_error(resp: requests.Response) -> None:
     }
     raise HTTPException(status_code=resp.status_code, detail=detail)
 
+def _list_url() -> str:
+    qs = _mgmt_key_qs().lstrip("&")          # re-use system key if present
+    return f"{_scheduler_base()}/api/schedules{('?' + qs) if qs else ''}"
 
 # ──────────────────────────────────────────────────────────────────────
 # routes
@@ -263,3 +266,35 @@ def delete_schedule(transaction_id: str):
             detail="Transaction not found / already completed",
         )
     _forward_error(resp)
+
+@router.get(
+    "/api/schedule",
+    summary="List all scheduled jobs and their statuses",
+)
+def list_schedules():
+    """
+    Returns whatever the scheduler Function-App reports, typically:
+
+        {
+          "jobs": [
+            { "instanceId": "...", "exec_at_utc": "...", "prompt_type": "...",
+              "runtimeStatus": "Completed" | "Running" | "Pending" | ... },
+            ...
+          ]
+        }
+    """
+    # try /api/schedules first (Functions’ default), then plain /schedules
+    for path in (_list_url(), _list_url().replace("/api/schedules", "/schedules")):
+        try:
+            resp = requests.get(path, timeout=15)
+        except Exception as exc:                       # noqa: BLE001
+            _log.warning("Scheduler unreachable at %s: %s", path, exc)
+            continue
+
+        if resp.status_code == 200:
+            return Response(content=resp.content, media_type="application/json")
+        if resp.status_code in (404, 503):            # cold-start? try alt path
+            continue
+        _forward_error(resp)
+
+    raise HTTPException(status_code=502, detail="Scheduler list endpoint not found")

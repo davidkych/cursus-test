@@ -1,0 +1,22 @@
+{
+  "bindings": [
+    {
+      "authLevel": "function",
+      "direction": "in",
+      "methods": [ "get" ],
+      "name": "req",
+      "type": "httpTrigger",
+      "route": "schedules"
+    },
+    {
+      "direction": "out",
+      "name": "$return",
+      "type": "http"
+    },
+    {
+      "direction": "in",
+      "name": "client",
+      "type": "durableClient"
+    }
+  ]
+}

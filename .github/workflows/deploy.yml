@@ -246,19 +246,26 @@ jobs:
             --scope "/" || true
           echo "✅ scheduler MSI granted data-plane role"
 
-      # 6 ▸ expose scheduler base URL **and host key** to web-app  ← UPDATED
+      # 6 ▸ expose scheduler base URL **and system key** to web-app
       - name: Update web-app with scheduler settings
         run: |
           set -eo pipefail
+
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
-          # ── pull default *host* key so the web-app can call management APIs
-          host_key=$(az functionapp keys list -g $RG -n $SCHED_FUNC --query "hostKeys.default" -o tsv)
-          az webapp config appsettings set -g $RG -n $APP --settings \
+
+          # ── pull Durable **system** key (durableTaskExtension) so the web-app can call management APIs
+          system_key=$(az functionapp keys list \
+                          -g $RG -n $SCHED_FUNC \
+                          --query "systemKeys.durableTaskExtension" -o tsv)
+
+          az webapp config appsettings set \
+            -g $RG -n $APP --settings \
             SCHEDULER_BASE_URL=$sched_base \
             SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
-            SCHEDULER_MGMT_KEY=$host_key
-          echo "🔗 web-app now knows scheduler base $sched_base and host-key"
+            SCHEDULER_MGMT_KEY=$system_key
 
+          echo "🔗 web-app now knows scheduler base $sched_base and system key"
+          
       # 7 ▸ save logs on failure
       - if: failure()
         uses: actions/upload-artifact@v4
