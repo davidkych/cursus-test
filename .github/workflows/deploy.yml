@@ -246,47 +246,24 @@ jobs:
             --scope "/" || true
           echo "✅ scheduler MSI granted data-plane role"
 
-      # 6 ▸ expose scheduler base URL **and management key** to web-app
+      # 6 ▸ expose scheduler base URL to web-app  ⇢ **no key required**
       - name: Update web-app with scheduler settings
         run: |
           set -eo pipefail
-
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
 
-          # ── try up to 6× (≈60 s) to fetch a non-empty Durable system key ──
-          max_tries=6
-          for i in $(seq 1 $max_tries); do
-            system_key=$(az functionapp keys list \
-                            -g $RG -n $SCHED_FUNC \
-                            --query "systemKeys.durableTaskExtension" -o tsv)
-
-            if [ -z "$system_key" ]; then
-              system_key=$(az functionapp keys list \
-                              -g $RG -n $SCHED_FUNC \
-                              --query "hostKeys._master" -o tsv)
-            fi
-
-            if [ -n "$system_key" ]; then
-              echo "✅ management key obtained on try $i"
-              break
-            fi
-
-            echo "🔄 keys not ready yet – try $i/$max_tries, waiting 10 s"
-            sleep 10
-          done
-
-          if [ -z "$system_key" ]; then
-            echo "❌ No management key after ${max_tries} attempts"; exit 1
-          fi
-
+          # We deliberately **skip** any key lookup – the façade already
+          # works anonymously and will omit the ‘&code=…’ query string
+          # when SCHEDULER_MGMT_KEY is empty or unset.
           az webapp config appsettings set \
             -g $RG -n $APP --settings \
             SCHEDULER_BASE_URL=$sched_base \
             SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
-            SCHEDULER_MGMT_KEY=$system_key
+            SCHEDULER_MGMT_KEY=""
 
-          echo "🔗 web-app now knows scheduler base $sched_base and valid key"
+          echo "🔗 web-app now knows scheduler base $sched_base (no key needed)"
 
+          
       # 7 ▸ save logs on failure
       - if: failure()
         uses: actions/upload-artifact@v4
