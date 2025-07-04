@@ -154,7 +154,7 @@ jobs:
       # inherits RG / APP / LOCATION / TIMEOUT
 
     steps:
-      # 1 ▸ checkout & toolchain ---------------------------------------------
+      # 1 ▸ checkout & toolchain ------------------------------------------------
       - uses: actions/checkout@v3
 
       - uses: actions/setup-python@v4
@@ -162,24 +162,35 @@ jobs:
           python-version: "3.9"
           cache: pip
 
-      # 2 ▸ Azure login -------------------------------------------------------
+      # 2 ▸ Azure login ---------------------------------------------------------
       - uses: azure/login@v1
         with:
           client-id:       ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      # 3 ▸ zip-package & resilient deploy -----------------------------------
-      - name: ZIP-deploy scheduler Function-App
+      # 3 ▸ vendor deps **inside** the Function-App & build zip -----------------
+      - name: Vendor scheduler deps and ZIP package
         shell: bash
         run: |
           set -eo pipefail
           pushd src/scheduler_fapp
-          zip -qr ../../sched.zip .
+
+          echo "📦 Installing Python deps into .python_packages/ …"
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r requirements.txt \
+                                   --target .python_packages/lib/site-packages
+
+          echo "🗜  Creating deployment ZIP …"
+          zip -qr ../../sched.zip . .python_packages
           popd
           echo "📦 scheduler zip size: $(du -h sched.zip | cut -f1)"
 
-          # ── retry loop (SCM can be slow) ───────────────────────────────
+      # 4 ▸ resilient ZIP-deploy ------------------------------------------------
+      - name: ZIP-deploy scheduler Function-App
+        shell: bash
+        run: |
+          set -eo pipefail
           for attempt in 1 2 3; do
             echo "🚀 ZIP deploy attempt $attempt"
             if az functionapp deployment source config-zip \
@@ -197,7 +208,32 @@ jobs:
           echo "🚀 scheduler running – tailing log 60 s …"
           timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
 
-      # 4 ▸ grant Cosmos role to scheduler MSI -------------------------------
+      # 4b ▸ health-probe – wait until /api/healthz returns 200 -----------------
+      - name: Verify scheduler health endpoint
+        shell: bash
+        run: |
+          set -eo pipefail
+          url="https://$SCHED_FUNC.azurewebsites.net/api/healthz"
+          echo "🔍 Probing $url …"
+
+          for attempt in {1..10}; do
+            http_code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
+
+            printf "Attempt %d → HTTP %s\n" "$attempt" "$http_code"
+            if [ "$http_code" = "200" ]; then
+              echo "✅ Health check passed:"
+              cat /tmp/healthz.json || true
+              exit 0
+            fi
+
+            echo "⌛ Not ready yet – waiting 15 s"
+            sleep 15
+          done
+
+          echo "💥 Scheduler health check failed after 10 attempts"
+          exit 1
+
+      # 5 ▸ grant Cosmos role to scheduler MSI ----------------------------------
       - name: Grant Cosmos role (scheduler MSI)
         run: |
           set -eo pipefail
@@ -210,7 +246,7 @@ jobs:
             --scope "/" || true
           echo "✅ scheduler MSI granted data-plane role"
 
-      # 5 ▸ expose scheduler base URL to web-app -----------------------------
+      # 6 ▸ expose scheduler base URL to web-app --------------------------------
       - name: Update web-app with SCHEDULER_BASE_URL
         run: |
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
@@ -218,7 +254,7 @@ jobs:
             SCHEDULER_BASE_URL=$sched_base SCHEDULER_FUNCTION_NAME=$SCHED_FUNC
           echo "🔗 web-app now knows scheduler base $sched_base"
 
-      # 6 ▸ save logs on failure ---------------------------------------------
+      # 7 ▸ save logs on failure -------------------------------------------------
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
