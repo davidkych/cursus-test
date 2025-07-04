@@ -1,6 +1,5 @@
 # ── src/scheduler_fapp/schedule_starter/init.py ───────────────────────
 import azure.functions as func
-import azure.durable_functions as df
 import json
 import logging
 import os
@@ -11,30 +10,36 @@ from utils import parse_hkt_to_utc, log_to_api   # shared module
 def _make_location_header(instance_id: str) -> str:
     """
     Build a *public* status-polling URL for the given `instance_id`.
-
-    On the combination azure-functions==1.20.0 × durable==1.2.6
-    `req.url` sometimes resolves to an **async coroutine**, causing  
-    `TypeError: replace() argument 2 must be str, not coroutine`.
-
-    The workaround is to reconstruct the base URL from the
-    `WEBSITE_SITE_NAME` environment variable that is always present
-    inside an App-Service / Function-App container.
     """
-    site_name = os.getenv("WEBSITE_SITE_NAME", "")   # e.g. cursus-test-sched
+    site_name = os.getenv("WEBSITE_SITE_NAME", "")       # e.g. cursus-test-sched
     base = f"https://{site_name}.azurewebsites.net" if site_name else "http://localhost:7071"
     return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}"
 
 
 def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D401
     """
-    HTTP entry-point that kicks off the orchestration **without using**
-    `create_check_status_response`, which currently crashes because of
-    the coroutine/replace bug mentioned above.
+    HTTP entry-point that kicks off an orchestration.
 
-    NOTE: Must remain **synchronous** – async entry-points are not
-    supported by the in-proc Python worker used by Durable Functions.
+    Kept **synchronous** because the in-proc Python worker cannot invoke
+    coro functions directly.  We import *azure.durable_functions* lazily
+    so that, if the Durable package is missing, we can surface a useful
+    diagnostic instead of letting the whole function fail to load – which
+    would otherwise result in a mysterious **404** on /api/schedule.
     """
     try:
+        # ── lazy import to avoid cold-start failures ─────────────────
+        try:
+            import azure.durable_functions as df
+        except ImportError as exc:                         # pragma: no cover
+            logging.exception("Durable Functions SDK missing")
+            return func.HttpResponse(
+                json.dumps(
+                    {"error": "Durable Functions SDK not available", "detail": str(exc)}
+                ),
+                status_code=500,
+                mimetype="application/json",
+            )
+
         logging.info("↪ /schedule called")
 
         # ── payload parsing & validation ──────────────────────────────
@@ -70,7 +75,7 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             "payload": body["payload"],
         }
 
-        # ── create orchestration (sync) ───────────────────────────────
+        # ── create orchestration ──────────────────────────────────────
         client = df.DurableOrchestrationClient(starter)
         instance_id = client.start_new("schedule_orchestrator", None, orch_input)
         logging.info("🎬 Started orchestration %s", instance_id)
@@ -81,7 +86,7 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
             f"(instance {instance_id})",
         )
 
-        # ── manual 202 Accepted response (work-around) ───────────────
+        # ── manual 202 Accepted response ─────────────────────────────
         location = _make_location_header(instance_id)
         return func.HttpResponse(
             json.dumps({"id": instance_id}),
@@ -91,7 +96,7 @@ def main(req: func.HttpRequest, starter: str) -> func.HttpResponse:  # noqa: D40
         )
 
     # ── generic diagnostics ──────────────────────────────────────────
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:                                # noqa: BLE001
         logging.exception("Unhandled error in /schedule")
         return func.HttpResponse(
             json.dumps({"error": str(exc), "type": exc.__class__.__name__}),
