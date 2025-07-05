@@ -1,0 +1,10 @@
+// src/scheduler_fapp/wipe_schedules/function.json
+{
+  "bindings": [
+    { "type": "httpTrigger", "authLevel": "anonymous",
+      "direction": "in",  "name": "req",
+      "methods": ["post"], "route": "wipe" },
+    { "type": "http", "direction": "out", "name": "$return" },
+    { "type": "durableClient", "direction": "in", "name": "client" }
+  ]
+}
