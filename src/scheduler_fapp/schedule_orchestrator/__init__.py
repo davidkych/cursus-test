@@ -1,5 +1,6 @@
+# ── src/scheduler_fapp/schedule_orchestrator/__init__.py ─────────────
 import azure.durable_functions as df
-from datetime import datetime
+from datetime import datetime, timezone          # ← added timezone
 from utils import log_to_api
 
 
@@ -19,11 +20,13 @@ def orchestrator(ctx: df.DurableOrchestrationContext):   # noqa: D401
     )
 
     # ── wait until exec time -----------------------------------------
-    # Convert the ISO string to a *naïve* UTC datetime so it can be
-    # compared with ctx.current_utc_datetime (also naïve).
-    exec_at = datetime.fromisoformat(data["exec_at_utc"]).replace(tzinfo=None)
-    now_utc = ctx.current_utc_datetime
-    fire_at = max(exec_at, now_utc)           # “next available instance”
+    # Convert ISO string to a **UTC-aware** datetime so it compares cleanly
+    # with ctx.current_utc_datetime (which is already tz-aware).
+    exec_at = datetime.fromisoformat(data["exec_at_utc"]).replace(
+        tzinfo=timezone.utc
+    )
+    now_utc = ctx.current_utc_datetime           # tz-aware (UTC)
+    fire_at = max(exec_at, now_utc)              # next available instance
 
     yield ctx.create_timer(fire_at)
 
