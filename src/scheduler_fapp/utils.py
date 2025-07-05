@@ -1,3 +1,4 @@
+# ── src/scheduler_fapp/utils.py ───────────────────────────────────────
 """
 Shared helpers for the Durable-scheduler Function-App.
 Keeps business logic out of the individual Azure Functions.
@@ -25,12 +26,10 @@ _MIN_LEAD = 60        # seconds – must schedule ≥ 1 min ahead
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
-    Convert a **naïve** ISO-8601 string expressed in **HKT** into a **naïve**
-    UTC ISO-8601 string **without** any “+00:00” offset.
+    Convert an **HKT** ISO-8601 string into a **timezone-aware UTC**
+    ISO-8601 string (with “+00:00” offset).
 
-    Durable Functions Python v1.x expects *naïve* UTC ``datetime`` objects for
-    ``create_timer()``.  Passing a timezone-aware value silently prevents the
-    timer from ever resuming.
+    Durable Functions timers require timezone-aware UTC datetimes.
     """
     try:
         hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve
@@ -38,24 +37,23 @@ def parse_hkt_to_utc(exec_at_str: str) -> str:
         raise ValueError("`exec_at` must be an ISO-8601 datetime "
                          "(YYYY-MM-DDThh:mm)") from exc
 
-    # attach HKT zone and convert to UTC
+    # attach HKT zone and convert to aware UTC
     if hkt_dt.tzinfo is None:
         hkt_dt = hkt_dt.replace(tzinfo=_HKT)
     else:
         hkt_dt = hkt_dt.astimezone(_HKT)
 
-    # **strip tzinfo again** ⇒ naïve UTC
-    utc_dt = hkt_dt.astimezone(timezone.utc).replace(tzinfo=None)
+    utc_dt = hkt_dt.astimezone(timezone.utc)                   # aware
 
-    # ── stricter validation ---------------------------------------------------
-    delta = (utc_dt - datetime.utcnow()).total_seconds()
-    if delta <= _MIN_LEAD:         # must be > 60 s *in the future*
+    # ── stricter validation ────────────────────────────────────────
+    delta = (utc_dt - datetime.now(timezone.utc)).total_seconds()
+    if delta <= _MIN_LEAD:
         raise ValueError(
             f"`exec_at` must be at least {_MIN_LEAD} s in the future "
             f"(Δ={delta:.1f}s)"
         )
 
-    return utc_dt.isoformat(timespec="seconds")
+    return utc_dt.isoformat(timespec="seconds")               # KEEPS “+00:00”
 
 # ── infrastructure helpers ──────────────────────────────────────────
 def _internal_base() -> str:

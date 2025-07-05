@@ -1,22 +1,20 @@
 # ── src/scheduler_fapp/schedule_orchestrator/__init__.py ─────────────
 import azure.durable_functions as df
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from utils import log_to_api
 
 
-def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
+def orchestrator(ctx: df.DurableOrchestrationContext):      # noqa: D401
     """
-    Single-fire orchestrator that waits until *exec_at_utc* and then calls the
-    ``execute_prompt`` activity.
+    Wait until *exec_at_utc* then call ``execute_prompt``.
 
-    **Important** – Durable Functions’ replay engine requires the orchestration
-    to be *deterministic*: avoid non-deterministic I/O when ``ctx.is_replaying``
-    is *True*.
+    All datetimes are handled as **timezone-aware UTC**, which is required for
+    Durable Functions timers to resume correctly.
     """
     data = ctx.get_input() or {}
     entity_id = df.EntityId("schedule_entity", "registry")
 
-    # ── register in entity (for browse / deletion) ----------------------------
+    # register in entity (for browse/deletion) -------------------------------
     ctx.signal_entity(
         entity_id,
         "add",
@@ -27,17 +25,14 @@ def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
         },
     )
 
-    # ── normalise datetimes  ➜ **naïve UTC** ---------------------------------
-    exec_at = datetime.fromisoformat(data["exec_at_utc"])          # naïve
-    now_utc = ctx.current_utc_datetime.replace(tzinfo=None)        # force naïve
+    # ── normalise datetimes (aware UTC) ─────────────────────────────────────
+    exec_at = datetime.fromisoformat(data["exec_at_utc"])      # aware (+00:00)
+    now_utc = ctx.current_utc_datetime                         # aware UTC
 
-    # ── ensure the timer is *strictly* in the future --------------------------
-    if exec_at <= now_utc:
-        fire_at = now_utc + timedelta(seconds=1)   # 1-second safety cushion
-    else:
-        fire_at = exec_at
+    # ensure the timer is *strictly* in the future ---------------------------
+    fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)
 
-    # ── inline diagnostics (guarded against replay) ---------------------------
+    # inline diagnostics (guarded against replay) ----------------------------
     if not ctx.is_replaying:
         delta = (fire_at - now_utc).total_seconds()
         log_to_api(
@@ -46,11 +41,11 @@ def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
             f"→ fire_at={fire_at.isoformat()} (Δ={delta:.1f}s)"
         )
 
-    # ── wait & execute --------------------------------------------------------
+    # ── wait & execute ------------------------------------------------------
     yield ctx.create_timer(fire_at)
     result = yield ctx.call_activity("execute_prompt", data)
 
-    # ── deregister & finish ---------------------------------------------------
+    # ── deregister & finish --------------------------------------------------
     ctx.signal_entity(entity_id, "remove", ctx.instance_id)
     if not ctx.is_replaying:
         log_to_api("info", f"Executed scheduled job {ctx.instance_id}")
