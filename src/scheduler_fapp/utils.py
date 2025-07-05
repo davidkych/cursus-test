@@ -21,15 +21,15 @@ except Exception:                          # pragma: no cover
     )
     _HKT = timezone(timedelta(hours=8), name="HKT")
 
-_MIN_LEAD = 60        # seconds – must schedule ≥ 1 min ahead
+_MIN_LEAD = 60  # seconds – must schedule ≥ 1 min ahead
 
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
-    Convert an **HKT** ISO-8601 string into a **timezone-aware UTC**
-    ISO-8601 string (with “+00:00” offset).
+    Convert an ISO-8601 **HKT** timestamp into a **naïve** UTC timestamp.
 
-    Durable Functions timers require timezone-aware UTC datetimes.
+    Durable Functions Python 1.x **requires naïve UTC datetimes** for
+    ``create_timer``.  We therefore strip the “+00:00” offset before returning.
     """
     try:
         hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve
@@ -37,24 +37,26 @@ def parse_hkt_to_utc(exec_at_str: str) -> str:
         raise ValueError("`exec_at` must be an ISO-8601 datetime "
                          "(YYYY-MM-DDThh:mm)") from exc
 
-    # attach HKT zone and convert to aware UTC
+    # attach HKT zone then convert to aware UTC
     if hkt_dt.tzinfo is None:
         hkt_dt = hkt_dt.replace(tzinfo=_HKT)
     else:
         hkt_dt = hkt_dt.astimezone(_HKT)
 
-    utc_dt = hkt_dt.astimezone(timezone.utc)                   # aware
+    utc_dt_aware  = hkt_dt.astimezone(timezone.utc)
+    utc_dt_naive  = utc_dt_aware.replace(tzinfo=None)          # ***strip tzinfo***
 
-    # ── stricter validation ────────────────────────────────────────
-    delta = (utc_dt - datetime.now(timezone.utc)).total_seconds()
+    # ── stricter validation ---------------------------------------------------
+    delta = (utc_dt_naive - datetime.utcnow()).total_seconds()
     if delta <= _MIN_LEAD:
         raise ValueError(
             f"`exec_at` must be at least {_MIN_LEAD} s in the future "
             f"(Δ={delta:.1f}s)"
         )
 
-    return utc_dt.isoformat(timespec="seconds")               # KEEPS “+00:00”
-
+    # keep seconds precision, **no offset**
+    return utc_dt_naive.isoformat(timespec="seconds")
+    
 # ── infrastructure helpers ──────────────────────────────────────────
 def _internal_base() -> str:
     """
