@@ -21,13 +21,13 @@ async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:   # noq
         jobs = []
         for instance_id, info in registry.items():
             stat_obj = await dclient.get_status(instance_id)
-            runtime = str(stat_obj.runtime_status) if stat_obj else "Unknown"
+            runtime = stat_obj.runtime_status.name if stat_obj else "Unknown"
 
             jobs.append(
                 {
-                    "instanceId": instance_id,
-                    "exec_at_utc": info.get("exec_at_utc"),
-                    "prompt_type": info.get("prompt_type"),
+                    "instanceId":   instance_id,
+                    "exec_at_utc":  info.get("exec_at_utc"),
+                    "prompt_type":  info.get("prompt_type"),
                     "runtimeStatus": runtime,
                 }
             )
