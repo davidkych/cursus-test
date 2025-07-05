@@ -37,12 +37,15 @@ jobs:
           python-version: "3.9"
           cache: pip
 
-      # 2 ▸ vendor deps -------------------------------------------------------
+      # ── step 2 ▸ vendor deps ───────────────────────────────────────────────
       - name: Vendor deps
         run: |
           pip install --upgrade pip
+          # install       ↓↓↓   into an isolated dir
           pip install --only-binary=:all: --prefer-binary \
-                      --no-cache-dir -r src/requirements.txt --target src/
+                      --no-cache-dir \
+                      -r src/requirements.txt \
+                      --target src/.python_packages
 
       # 3 ▸ Azure login -------------------------------------------------------
       - uses: azure/login@v1
@@ -90,14 +93,14 @@ jobs:
             --scope "/" || true
           echo "✅ web-app MSI granted data-plane role"
 
-      # 6 ▸ base app-settings --------------------------------------------------
+      # ── step 6 ▸ base app-settings  (append .python_packages to PYTHONPATH) ─
       - name: Configure Web-App settings
         run: |
           az webapp config appsettings set -g $RG -n $APP --settings \
             WEBSITE_RUN_FROM_PACKAGE=0 \
             SCM_DO_BUILD_DURING_DEPLOYMENT=false \
             WEBSITES_PORT=8000 \
-            PYTHONPATH=/home/site/wwwroot \
+            PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/.python_packages" \
             WEBSITES_CONTAINER_START_TIME_LIMIT=$TIMEOUT \
             WEBSITES_STARTUP_COMMAND="gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app" \
             WEBSITES_LOG_MESSAGE_LEVEL=Verbose \
