@@ -1,10 +1,10 @@
 # ── src/scheduler_fapp/schedule_orchestrator/__init__.py ─────────────
 import azure.durable_functions as df
-from datetime import datetime, timezone
+from datetime import datetime
 from utils import log_to_api
 
 
-def orchestrator(ctx: df.DurableOrchestrationContext):   # noqa: D401
+def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
     data = ctx.get_input() or {}
     entity_id = df.EntityId("schedule_entity", "registry")
 
@@ -20,20 +20,18 @@ def orchestrator(ctx: df.DurableOrchestrationContext):   # noqa: D401
     )
 
     # ── wait until exec time -----------------------------------------
-    # Keep both datetimes **timezone-aware (UTC)** so Durable can fire the timer
-    exec_at = datetime.fromisoformat(data["exec_at_utc"])
-    if exec_at.tzinfo is None:
-        exec_at = exec_at.replace(tzinfo=timezone.utc)
-
-    now_utc = ctx.current_utc_datetime                   # already tz-aware
+    exec_at = datetime.fromisoformat(data["exec_at_utc"])          # naïve UTC
+    now_utc = ctx.current_utc_datetime                             # naïve UTC
     fire_at = max(exec_at, now_utc)
 
-    # inline diagnostics to aid future timing investigations
-    log_to_api(
-        "debug",
-        f"[diag] orchestrator now={now_utc.isoformat()} "
-        f"→ fire_at={fire_at.isoformat()}",
-    )
+    # lightweight diagnostics (safe ⇒ no side-effects during replay)
+    if not ctx.is_replaying:
+        log_to_api(
+            "debug",
+            f"[diag] orch now={now_utc.isoformat()} "
+            f"→ fire_at={fire_at.isoformat()} "
+            f"(delta={(fire_at-now_utc).total_seconds():.1f}s)"
+        )
 
     yield ctx.create_timer(fire_at)
 
@@ -42,7 +40,8 @@ def orchestrator(ctx: df.DurableOrchestrationContext):   # noqa: D401
 
     # ── deregister & finish ------------------------------------------
     ctx.signal_entity(entity_id, "remove", ctx.instance_id)
-    log_to_api("info", f"Executed scheduled job {ctx.instance_id}")
+    if not ctx.is_replaying:
+        log_to_api("info", f"Executed scheduled job {ctx.instance_id}")
     return result
 
 

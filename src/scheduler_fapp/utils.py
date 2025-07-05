@@ -11,44 +11,46 @@ import requests
 
 # ── constants ────────────────────────────────────────────────────────
 try:
-    from zoneinfo import ZoneInfo  # Python 3.9+
+    from zoneinfo import ZoneInfo          # Python 3.9+
     _HKT = ZoneInfo("Asia/Hong_Kong")
-except Exception:                  # pragma: no cover
-    logging.warning("tzdata for 'Asia/Hong_Kong' not found – "
-                    "falling back to fixed UTC+8 offset")
+except Exception:                          # pragma: no cover
+    logging.warning(
+        "tzdata for 'Asia/Hong_Kong' not found – "
+        "falling back to fixed UTC+8 offset"
+    )
     _HKT = timezone(timedelta(hours=8), name="HKT")
 
-_MIN_LEAD = 60   # seconds – must schedule ≥ 1 min ahead
+_MIN_LEAD = 60        # seconds – must schedule ≥ 1 min ahead
 
 
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
-    Convert a *naive* ISO-8601 string (assumed HKT) into a **UTC-aware**
-    ISO string **retaining its “+00:00” offset**.
+    Convert a **naïve** ISO-8601 string expressed in **HKT** into a **naïve**
+    UTC ISO-8601 string **without** any “+00:00” offset.
 
-    The Durable Functions runtime requires a timezone-aware timestamp;
-    removing the offset will cause `create_timer()` never to fire.
+    Durable Functions Python v1.x expects *naïve* UTC `datetime` objects for
+    `create_timer()`.  Passing a timezone-aware value silently prevents the
+    timer from ever resuming.
     """
     try:
-        hkt_dt = datetime.fromisoformat(exec_at_str)           # naive
+        hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve
     except ValueError as exc:
         raise ValueError("`exec_at` must be an ISO-8601 datetime "
                          "(YYYY-MM-DDThh:mm)") from exc
 
-    # attach HKT zone and convert to UTC (still tz-aware here)
+    # attach HKT zone and convert to UTC
     if hkt_dt.tzinfo is None:
         hkt_dt = hkt_dt.replace(tzinfo=_HKT)
     else:
         hkt_dt = hkt_dt.astimezone(_HKT)
 
-    utc_dt = hkt_dt.astimezone(timezone.utc)                   # tz-aware UTC
+    # **strip tzinfo again** ⇒ naïve UTC
+    utc_dt = hkt_dt.astimezone(timezone.utc).replace(tzinfo=None)
 
-    now_utc = datetime.now(timezone.utc)                       # tz-aware UTC
-    if (utc_dt - now_utc).total_seconds() < _MIN_LEAD:
+    if (utc_dt - datetime.utcnow()).total_seconds() < _MIN_LEAD:
         raise ValueError("`exec_at` must be at least 60 seconds in the future")
 
-    # keep “+00:00” offset so that downstream code sees an **aware** value
     return utc_dt.isoformat(timespec="seconds")
 
 
@@ -57,7 +59,7 @@ def _internal_base() -> str:
     """
     Resolve the FastAPI base URL.
 
-    Order of precedence:
+    Precedence:
     1. `WEBAPP_BASE_URL`
     2. `FASTAPI_SITE_NAME`
     3. `WEBAPP_SITE_NAME` / `WEBSITE_SITE_NAME`
@@ -93,15 +95,14 @@ def log_to_api(level: str,
         "message":       message,
     }
     try:
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
+        requests.post(url, json=payload, timeout=10).raise_for_status()
     except Exception as exc:                       # noqa: BLE001
         logging.warning("Log API call failed: %s", exc)
 
 
 # ── prompt dispatch table ────────────────────────────────────────────
 def _log_append(payload: dict):
-    """Simply proxies to the Log API (best-effort)."""
+    """Proxy to the Log API (best-effort)."""
     url = f"{_internal_base()}/api/log"
     resp = requests.post(url, json=payload, timeout=10)
     resp.raise_for_status()
@@ -119,13 +120,9 @@ PROMPTS: dict[str, callable[[dict], object]] = {
 
 
 def execute_prompt(prompt_type: str, payload: dict):
-    """
-    Execute the requested prompt and return whatever the handler returns.
-    Raises ValueError for unknown `prompt_type`.
-    """
+    """Dispatch to the requested prompt handler."""
     try:
         handler = PROMPTS[prompt_type]
     except KeyError as exc:
         raise ValueError(f"Unsupported prompt_type '{prompt_type}'") from exc
-
     return handler(payload)
