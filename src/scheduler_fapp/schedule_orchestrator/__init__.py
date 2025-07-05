@@ -1,6 +1,15 @@
 # ── src/scheduler_fapp/schedule_orchestrator/__init__.py ─────────────
+"""
+Orchestrator that waits until *exec_at_utc* then calls ``execute_prompt``.
+
+Key change (July 2025):
+    • Works with **timezone-aware** UTC datetimes; naïve values caused
+      timers to be silently ignored on Durable-Functions Python 1.2.x.
+"""
+from __future__ import annotations
+
 import azure.durable_functions as df
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from utils import log_to_api
 
 
@@ -8,8 +17,8 @@ def orchestrator(ctx: df.DurableOrchestrationContext):        # noqa: D401
     """
     Wait until *exec_at_utc* then call ``execute_prompt``.
 
-    Uses **naïve UTC** datetimes because the Python Durable runtime expects
-    them.  A 1-second cushion guarantees the timer is strictly in the future.
+    Durable 1.2.x expects an **aware** UTC datetime in `create_timer`.
+    A 1-second cushion guarantees the timer is strictly in the future.
     """
     data = ctx.get_input() or {}
     entity_id = df.EntityId("schedule_entity", "registry")
@@ -25,9 +34,12 @@ def orchestrator(ctx: df.DurableOrchestrationContext):        # noqa: D401
         },
     )
 
-    # ── normalise datetimes (naïve UTC) ─────────────────────────────────────
-    exec_at = datetime.fromisoformat(data["exec_at_utc"])           # naïve
-    now_utc = ctx.current_utc_datetime.replace(tzinfo=None)         # naïve
+    # ── normalise datetimes (aware UTC) ─────────────────────────────────────
+    exec_at = datetime.fromisoformat(data["exec_at_utc"])
+    if exec_at.tzinfo is None:                         # safeguard
+        exec_at = exec_at.replace(tzinfo=timezone.utc)
+
+    now_utc = ctx.current_utc_datetime               # already aware
 
     # ensure the timer is *strictly* in the future ---------------------------
     fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)

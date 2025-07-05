@@ -2,6 +2,11 @@
 """
 Shared helpers for the Durable-scheduler Function-App.
 Keeps business logic out of the individual Azure Functions.
+
+Key change (July 2025):
+    • `parse_hkt_to_utc` now returns a **timezone-aware UTC string**
+      (e.g. “2025-07-05T16:59:53+00:00”) instead of a naïve one.
+      Durable-Functions Python ≥1.2.x requires aware values for timers.
 """
 from __future__ import annotations
 
@@ -21,42 +26,47 @@ except Exception:                          # pragma: no cover
     )
     _HKT = timezone(timedelta(hours=8), name="HKT")
 
-_MIN_LEAD = 60  # seconds – must schedule ≥ 1 min ahead
+_MIN_LEAD = 60          # seconds – must schedule ≥ 1 min ahead
 
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
-    Convert an ISO-8601 **HKT** timestamp into a **naïve** UTC timestamp.
+    Convert an ISO-8601 **HKT** timestamp into a **timezone-aware UTC string**.
 
-    Durable Functions Python 1.x **requires naïve UTC datetimes** for
-    ``create_timer``.  We therefore strip the “+00:00” offset before returning.
+    Durable-Functions Python 1.2.x requires *aware* datetimes for `create_timer`.
+    We therefore **keep** the “+00:00” offset in the returned string.
+
+    Raises
+    ------
+    ValueError
+        • If the string is not ISO-8601  
+        • If the requested time is less than 60 s in the future (UTC)
     """
     try:
-        hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve
+        hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve or aware
     except ValueError as exc:
         raise ValueError("`exec_at` must be an ISO-8601 datetime "
                          "(YYYY-MM-DDThh:mm)") from exc
 
-    # attach HKT zone then convert to aware UTC
+    # attach HKT zone then convert to aware UTC ------------------------------
     if hkt_dt.tzinfo is None:
         hkt_dt = hkt_dt.replace(tzinfo=_HKT)
     else:
         hkt_dt = hkt_dt.astimezone(_HKT)
 
-    utc_dt_aware  = hkt_dt.astimezone(timezone.utc)
-    utc_dt_naive  = utc_dt_aware.replace(tzinfo=None)          # ***strip tzinfo***
+    utc_dt_aware = hkt_dt.astimezone(timezone.utc)
 
-    # ── stricter validation ---------------------------------------------------
-    delta = (utc_dt_naive - datetime.utcnow()).total_seconds()
+    # ── stricter validation --------------------------------------------------
+    delta = (utc_dt_aware - datetime.now(timezone.utc)).total_seconds()
     if delta <= _MIN_LEAD:
         raise ValueError(
             f"`exec_at` must be at least {_MIN_LEAD} s in the future "
             f"(Δ={delta:.1f}s)"
         )
 
-    # keep seconds precision, **no offset**
-    return utc_dt_naive.isoformat(timespec="seconds")
-    
+    # keep seconds precision **with offset**
+    return utc_dt_aware.isoformat(timespec="seconds")
+
 # ── infrastructure helpers ──────────────────────────────────────────
 def _internal_base() -> str:
     """
@@ -78,7 +88,6 @@ def _internal_base() -> str:
         return f"https://{site}.azurewebsites.net"
 
     return "http://localhost:8000"
-
 
 # ── logging helper ──────────────────────────────────────────────────
 def log_to_api(level: str,
@@ -102,7 +111,6 @@ def log_to_api(level: str,
     except Exception as exc:                       # noqa: BLE001
         logging.warning("Log API call failed: %s", exc)
 
-
 # ── prompt dispatch table ────────────────────────────────────────────
 def _log_append(payload: dict):
     """Proxy to the Log API (best-effort)."""
@@ -110,7 +118,6 @@ def _log_append(payload: dict):
     resp = requests.post(url, json=payload, timeout=10)
     resp.raise_for_status()
     return resp.json()
-
 
 PROMPTS: dict[str, callable[[dict], object]] = {
     "log.append": _log_append,
@@ -120,7 +127,6 @@ PROMPTS: dict[str, callable[[dict], object]] = {
         timeout=p.get("timeout", 10)
     ).json(),
 }
-
 
 def execute_prompt(prompt_type: str, payload: dict):
     """Dispatch to the requested prompt handler."""
