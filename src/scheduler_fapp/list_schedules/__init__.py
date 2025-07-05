@@ -1,3 +1,4 @@
+# ── src/scheduler_fapp/list_schedules/__init__.py ────────────────────
 import azure.functions as func
 import azure.durable_functions as df
 import json
@@ -20,7 +21,7 @@ async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:   # noq
         jobs = []
         for instance_id, info in registry.items():
             stat_obj = await dclient.get_status(instance_id)
-            runtime = stat_obj.runtime_status if stat_obj else "Unknown"
+            runtime = str(stat_obj.runtime_status) if stat_obj else "Unknown"
 
             jobs.append(
                 {
