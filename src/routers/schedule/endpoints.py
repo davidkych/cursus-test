@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
-import time                       # ← NEW
+import time
 from typing import Any
 
 import requests
@@ -38,16 +38,16 @@ class ScheduleResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────
 # helpers
 # ----------------------------------------------------------------------
-_base_cache: str | None = None               # resolved once, reused thereafter
+_base_cache: str | None = None  # resolved once, reused thereafter
 
 
 def _scheduler_base() -> str:
     """
     Resolve the Function-App base URL with robust fallbacks.
 
-    1. `SCHEDULER_BASE_URL` – unless it points to localhost / dev.
-    2. `SCHEDULER_FUNCTION_NAME` – → https://<name>.azurewebsites.net
-    3. localhost default.
+    1. `SCHEDULER_BASE_URL`  – unless it points to localhost / dev
+    2. `SCHEDULER_FUNCTION_NAME` → https://<name>.azurewebsites.net
+    3. localhost default
     """
     global _base_cache
     if _base_cache:
@@ -73,18 +73,28 @@ def _scheduler_base() -> str:
 
 
 def _mgmt_key_qs() -> str:
-    """
-    Build “&code=…” query-string segment only when a **non-empty** key is present.
-    """
+    """Build “&code=…” segment only when a **non-empty** key exists."""
     key = (os.getenv("SCHEDULER_MGMT_KEY") or "").strip()
     return f"&code={key}" if key else ""
 
+
 def _status_url(instance_id: str) -> str:
-    qs = _mgmt_key_qs().lstrip("&")
-    return (
-        f"{_scheduler_base()}/runtime/webhooks/durabletask/instances/{instance_id}"
-        f"{'?' + qs if qs else ''}"
-    )
+    """
+    Build a status-polling URL.
+
+    * If a host/function key is configured we return the richer Durable
+      runtime endpoint (requires the key).
+    * Otherwise we fall back to the anonymous helper endpoint exposed by
+      the scheduler (`/api/status/{id}`) to avoid 401s.
+    """
+    base   = _scheduler_base()
+    key_qs = _mgmt_key_qs().lstrip("&")
+
+    if key_qs:  # key available ➜ use runtime endpoint
+        return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}?{key_qs}"
+
+    # no key ➜ use anonymous endpoint
+    return f"{base}/api/status/{instance_id}"
 
 
 def _terminate_url(instance_id: str) -> str:
@@ -121,15 +131,17 @@ def _forward_error(resp: requests.Response) -> None:
     }
     raise HTTPException(status_code=resp.status_code, detail=detail)
 
+
 def _list_url() -> str:
-    qs = _mgmt_key_qs().lstrip("&")          # re-use system key if present
+    qs = _mgmt_key_qs().lstrip("&")  # re-use system key if present
     return f"{_scheduler_base()}/api/schedules{('?' + qs) if qs else ''}"
+
 
 # ──────────────────────────────────────────────────────────────────────
 # routes
 # ----------------------------------------------------------------------
-_COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "4"))   # ← NEW
-_COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY",   "5"))   # ← NEW
+_COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "4"))
+_COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY", "5"))
 
 
 @router.post(
@@ -139,7 +151,7 @@ _COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY",   "5"))   # ← NEW
 )
 def create_schedule(req: ScheduleRequest):
     """
-    Forwards the request to the scheduler Function-App, coping with **cold-start**
+    Forwards the request to the scheduler Function-App, coping with cold-start
     404s by retrying a few times before giving up.
 
     Azure Functions prepend **/api** by default; if the host has
@@ -159,37 +171,37 @@ def create_schedule(req: ScheduleRequest):
     # ── main try (fast path) ─────────────────────────────────────────
     tried_resp: requests.Response | None = None
     for path in ("/api/schedule", "/schedule"):
-        url   = f"{_scheduler_base()}{path}"
+        url = f"{_scheduler_base()}{path}"
         _log.info("Forwarding schedule request → %s", url)
 
         try:
             resp = _attempt_forward(url)
-        except Exception as exc:                    # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _log.exception("Unable to reach scheduler")
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
         if resp.status_code == 404:
             tried_resp = resp
             continue
-        if resp.status_code not in (200, 202):      # propagate any other error
+        if resp.status_code not in (200, 202):  # propagate any other error
             _forward_error(resp)
-        return _extract_instance(resp)              # success
+        return _extract_instance(resp)  # success
 
-    # ── cold-start back-off loop (only if *both* paths returned 404) ─
+    # ── cold-start back-off loop (both paths returned 404) ───────────
     if tried_resp is not None and tried_resp.status_code == 404:
         _log.info("Scheduler likely cold – retrying %s× after %s s delays",
                   _COLD_RETRIES, _COLD_DELAY)
-        for n in range(_COLD_RETRIES):
-            time.sleep(_COLD_DELAY)                 # blocking delay – acceptable
+        for _ in range(_COLD_RETRIES):
+            time.sleep(_COLD_DELAY)  # blocking delay – acceptable
             try:
                 resp = _attempt_forward(f"{_scheduler_base()}/api/schedule")
             except Exception:
-                continue                            # network issue – try next loop
+                continue  # network issue – try next loop
 
             if resp.status_code in (200, 202):
                 return _extract_instance(resp)
             if resp.status_code not in (404, 503):
-                _forward_error(resp)                # some other error → abort
+                _forward_error(resp)  # some other error → abort
 
     # ── still no luck → bubble up last 404 so clients see why ────────
     if tried_resp is not None:
@@ -270,13 +282,14 @@ def delete_schedule(transaction_id: str):
         )
     _forward_error(resp)
 
+
 @router.get(
     "/api/schedule",
     summary="List all scheduled jobs and their statuses",
 )
 def list_schedules():
     """
-    Returns whatever the scheduler Function-App reports, typically:
+    Returns whatever the scheduler reports, typically::
 
         {
           "jobs": [
@@ -290,13 +303,13 @@ def list_schedules():
     for path in (_list_url(), _list_url().replace("/api/schedules", "/schedules")):
         try:
             resp = requests.get(path, timeout=15)
-        except Exception as exc:                       # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             _log.warning("Scheduler unreachable at %s: %s", path, exc)
             continue
 
         if resp.status_code == 200:
             return Response(content=resp.content, media_type="application/json")
-        if resp.status_code in (404, 503):            # cold-start? try alt path
+        if resp.status_code in (404, 503):  # cold-start? try alt path
             continue
         _forward_error(resp)
 

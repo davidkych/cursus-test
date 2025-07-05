@@ -156,6 +156,9 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_DATABASE',                          value: 'cursusdb' }
         { name: 'COSMOS_CONTAINER',                         value: 'jsonContainer' }
 
+        /* NEW – lets the scheduler know where the FastAPI lives */
+        { name: 'WEBAPP_BASE_URL',                          value: 'https://${appName}.azurewebsites.net' }
+
         { name: 'APP_LOG_LEVEL',                            value: 'Information' }
       ]
     }
