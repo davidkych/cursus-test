@@ -1,6 +1,11 @@
 # ── src/routers/schedule/endpoints.py ────────────────────────────────
 """
 /api/schedule – façade in front of the Durable-scheduler Function-App.
+
+Adds robust cold-start back-off for **wipe-all** so that the first call made
+immediately after a fresh deployment no longer fails with
+
+    {"detail":"Scheduler wipe endpoint not found"}
 """
 from __future__ import annotations
 
@@ -38,7 +43,7 @@ class ScheduleResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────────────
 # helpers
 # ----------------------------------------------------------------------
-_base_cache: str | None = None  # resolved once, reused thereafter
+_base_cache: str | None = None           # resolved once, reused thereafter
 
 
 def _scheduler_base() -> str:
@@ -87,13 +92,13 @@ def _status_url(instance_id: str) -> str:
     • Otherwise we fall back to the anonymous helper endpoint exposed by
       the scheduler (`/api/status/{id}`) to avoid 401s.
     """
-    base   = _scheduler_base()
+    base = _scheduler_base()
     key_qs = _mgmt_key_qs().lstrip("&")
 
-    if key_qs:                            # key available ⇒ runtime endpoint
+    if key_qs:                         # key available ⇒ runtime endpoint
         return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}?{key_qs}"
 
-    return f"{base}/api/status/{instance_id}"   # anonymous endpoint
+    return f"{base}/api/status/{instance_id}"        # anonymous endpoint
 
 
 def _terminate_url(instance_id: str) -> str:
@@ -132,7 +137,7 @@ def _forward_error(resp: requests.Response) -> None:
 
 
 def _list_url() -> str:
-    qs = _mgmt_key_qs().lstrip("&")              # re-use system key if present
+    qs = _mgmt_key_qs().lstrip("&")                # reuse system key if present
     return f"{_scheduler_base()}/api/schedules{('?' + qs) if qs else ''}"
 
 
@@ -140,7 +145,7 @@ def _list_url() -> str:
 # routes
 # ----------------------------------------------------------------------
 _COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "4"))
-_COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY", "5"))
+_COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY", "5"))   # seconds
 
 
 @router.post(
@@ -152,9 +157,6 @@ def create_schedule(req: ScheduleRequest):
     """
     Forward the request to the scheduler Function-App, coping with cold-start
     404s by retrying a few times before giving up.
-
-    Azure Functions prepend **/api** by default; if the host has
-    `routePrefix=''` we quietly fall back to `/schedule`.
     """
     payload = req.model_dump()
 
@@ -167,7 +169,6 @@ def create_schedule(req: ScheduleRequest):
                 _log.warning("Scheduler timeout (attempt %s) for %s", attempt, url)
         raise requests.Timeout("Scheduler unreachable (30 s × 2)")
 
-    # ── main try (fast path) ─────────────────────────────────────────
     tried_resp: requests.Response | None = None
     for path in ("/api/schedule", "/schedule"):
         url = f"{_scheduler_base()}{path}"
@@ -175,18 +176,18 @@ def create_schedule(req: ScheduleRequest):
 
         try:
             resp = _attempt_forward(url)
-        except Exception as exc:                       # noqa: BLE001
+        except Exception as exc:                    # noqa: BLE001
             _log.exception("Unable to reach scheduler")
             raise HTTPException(status_code=504, detail=str(exc)) from exc
 
         if resp.status_code == 404:
             tried_resp = resp
             continue
-        if resp.status_code not in (200, 202):         # propagate any other error
+        if resp.status_code not in (200, 202):
             _forward_error(resp)
-        return _extract_instance(resp)                 # success
+        return _extract_instance(resp)              # success
 
-    # ── cold-start back-off loop (both paths returned 404) ───────────
+    # cold-start back-off -----------------------------------------------------
     if tried_resp is not None and tried_resp.status_code == 404:
         _log.info("Scheduler likely cold – retrying %s× after %s s delays",
                   _COLD_RETRIES, _COLD_DELAY)
@@ -195,14 +196,13 @@ def create_schedule(req: ScheduleRequest):
             try:
                 resp = _attempt_forward(f"{_scheduler_base()}/api/schedule")
             except Exception:
-                continue                               # network issue – try again
+                continue                            # network issue – try again
 
             if resp.status_code in (200, 202):
                 return _extract_instance(resp)
             if resp.status_code not in (404, 503):
-                _forward_error(resp)                   # other error → abort
+                _forward_error(resp)
 
-    # ── still no luck → bubble up last 404 so clients see why ────────
     if tried_resp is not None:
         _forward_error(tried_resp)
     raise HTTPException(status_code=502, detail="Scheduler endpoint not found")
@@ -222,11 +222,8 @@ def _extract_instance(resp: requests.Response) -> ScheduleResponse:
             instance_id = loc.split("/instances/")[-1].split("?")[0]
 
     if not instance_id:
-        _log.error(
-            "Unable to extract instance-id – status=%s, text=%s",
-            resp.status_code,
-            (resp.text or "")[:200],
-        )
+        _log.error("Unable to extract instance-id – status=%s, text=%s",
+                   resp.status_code, (resp.text or "")[:200])
         raise HTTPException(
             status_code=502,
             detail={
@@ -247,7 +244,7 @@ def get_schedule_status(transaction_id: str):
 
     try:
         resp = requests.get(url, timeout=15)
-    except Exception as exc:                            # noqa: BLE001
+    except Exception as exc:                         # noqa: BLE001
         _log.exception("Scheduler unreachable")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -268,7 +265,7 @@ def delete_schedule(transaction_id: str):
 
     try:
         resp = requests.post(url, timeout=15)
-    except Exception as exc:                            # noqa: BLE001
+    except Exception as exc:                         # noqa: BLE001
         _log.exception("Scheduler unreachable")
         raise HTTPException(status_code=504, detail=str(exc)) from exc
 
@@ -290,33 +287,26 @@ def list_schedules():
     """
     Returns whatever the scheduler reports, typically::
 
-        {
-          "jobs": [
-            { "instanceId": "...", "exec_at_utc": "...", "prompt_type": "...",
-              "runtimeStatus": "Completed" | "Running" | "Pending" | ... },
-            ...
-          ]
-        }
+        { "jobs": [ { … }, … ] }
     """
-    # try /api/schedules first (Functions’ default), then plain /schedules
     for path in (_list_url(), _list_url().replace("/api/schedules", "/schedules")):
         try:
             resp = requests.get(path, timeout=15)
-        except Exception as exc:                        # noqa: BLE001
+        except Exception as exc:                     # noqa: BLE001
             _log.warning("Scheduler unreachable at %s: %s", path, exc)
             continue
 
         if resp.status_code == 200:
             return Response(content=resp.content, media_type="application/json")
-        if resp.status_code in (404, 503):              # cold-start? try alt path
-            continue
+        if resp.status_code in (404, 503):
+            continue                                # cold-start? try alt path
         _forward_error(resp)
 
     raise HTTPException(status_code=502, detail="Scheduler list endpoint not found")
 
 
 # ──────────────────────────────────────────────────────────────────────
-# NEW – wipe-all route
+# NEW – wipe-all route  (now with cold-start back-off)
 # ----------------------------------------------------------------------
 @router.delete(
     "/api/schedule",
@@ -328,20 +318,27 @@ def wipe_schedules():
     orchestration instance and clear the registry entity.
 
     Falls back to plain `/wipe` when the host sets `routePrefix=''`.
+    Retries on 404/503 for freshly-deployed (cold) Functions.
     """
-    for path in ("/api/wipe", "/wipe"):
-        url = f"{_scheduler_base()}{path}"
-        try:
-            resp = requests.post(url, timeout=30)
-        except Exception as exc:                        # noqa: BLE001
-            _log.warning("Scheduler unreachable at %s: %s", url, exc)
-            continue
+    for retry in range(_COLD_RETRIES + 1):
+        for path in ("/api/wipe", "/wipe"):
+            url = f"{_scheduler_base()}{path}"
+            try:
+                resp = requests.post(url, timeout=30)
+            except Exception as exc:                 # noqa: BLE001
+                _log.warning("Scheduler unreachable at %s: %s", url, exc)
+                continue
 
-        if resp.status_code == 200:
-            return Response(content=resp.content, media_type="application/json")
-        if resp.status_code in (404, 503):
-            continue                                    # cold-start? try alt path
+            if resp.status_code == 200:
+                return Response(content=resp.content, media_type="application/json")
+            if resp.status_code in (404, 503):
+                continue                             # cold / not yet loaded
+            _forward_error(resp)                     # other errors → bubble up
 
-        _forward_error(resp)                            # other errors → bubble up
+        # give the Function-App a moment to warm up
+        if retry < _COLD_RETRIES:
+            _log.info("wipe: scheduler cold – backing off %s s (retry %s/%s)",
+                      _COLD_DELAY, retry + 1, _COLD_RETRIES)
+            time.sleep(_COLD_DELAY)
 
     raise HTTPException(status_code=502, detail="Scheduler wipe endpoint not found")
