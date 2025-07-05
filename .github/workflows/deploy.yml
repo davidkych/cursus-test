@@ -134,6 +134,14 @@ jobs:
 
           echo "💥 web-app deploy failed after 2 attempts"; exit 1
 
+      # 7b ▸ force recycle so new code is definitely loaded --------------------
+      - name: Restart web-app (force recycle after deploy)
+        run: |
+          set -eo pipefail
+          echo "♻️  Restarting $APP to ensure fresh workers …"
+          az webapp restart -g $RG -n $APP
+          echo "✅ restart command issued"
+
       # 8 ▸ save logs on failure ----------------------------------------------
       - if: failure()
         uses: actions/upload-artifact@v4
@@ -263,7 +271,6 @@ jobs:
 
           echo "🔗 web-app now knows scheduler base $sched_base (no key needed)"
 
-          
       # 7 ▸ save logs on failure
       - if: failure()
         uses: actions/upload-artifact@v4
