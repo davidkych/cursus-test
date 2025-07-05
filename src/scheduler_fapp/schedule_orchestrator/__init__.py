@@ -1,16 +1,16 @@
 # ── src/scheduler_fapp/schedule_orchestrator/__init__.py ─────────────
 import azure.durable_functions as df
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils import log_to_api
 
 
 def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
     """
     Single-fire orchestrator that waits until *exec_at_utc* and then calls the
-    `execute_prompt` activity.
+    ``execute_prompt`` activity.
 
     **Important** – Durable Functions’ replay engine requires the orchestration
-    to be *deterministic*: avoid non-deterministic I/O when `ctx.is_replaying`
+    to be *deterministic*: avoid non-deterministic I/O when ``ctx.is_replaying``
     is *True*.
     """
     data = ctx.get_input() or {}
@@ -30,7 +30,12 @@ def orchestrator(ctx: df.DurableOrchestrationContext):    # noqa: D401
     # ── normalise datetimes  ➜ **naïve UTC** ---------------------------------
     exec_at = datetime.fromisoformat(data["exec_at_utc"])          # naïve
     now_utc = ctx.current_utc_datetime.replace(tzinfo=None)        # force naïve
-    fire_at = max(exec_at, now_utc)
+
+    # ── ensure the timer is *strictly* in the future --------------------------
+    if exec_at <= now_utc:
+        fire_at = now_utc + timedelta(seconds=1)   # 1-second safety cushion
+    else:
+        fire_at = exec_at
 
     # ── inline diagnostics (guarded against replay) ---------------------------
     if not ctx.is_replaying:

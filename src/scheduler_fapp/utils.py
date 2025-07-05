@@ -22,15 +22,14 @@ except Exception:                          # pragma: no cover
 
 _MIN_LEAD = 60        # seconds – must schedule ≥ 1 min ahead
 
-
 # ── time helpers ─────────────────────────────────────────────────────
 def parse_hkt_to_utc(exec_at_str: str) -> str:
     """
     Convert a **naïve** ISO-8601 string expressed in **HKT** into a **naïve**
     UTC ISO-8601 string **without** any “+00:00” offset.
 
-    Durable Functions Python v1.x expects *naïve* UTC `datetime` objects for
-    `create_timer()`.  Passing a timezone-aware value silently prevents the
+    Durable Functions Python v1.x expects *naïve* UTC ``datetime`` objects for
+    ``create_timer()``.  Passing a timezone-aware value silently prevents the
     timer from ever resuming.
     """
     try:
@@ -48,11 +47,15 @@ def parse_hkt_to_utc(exec_at_str: str) -> str:
     # **strip tzinfo again** ⇒ naïve UTC
     utc_dt = hkt_dt.astimezone(timezone.utc).replace(tzinfo=None)
 
-    if (utc_dt - datetime.utcnow()).total_seconds() < _MIN_LEAD:
-        raise ValueError("`exec_at` must be at least 60 seconds in the future")
+    # ── stricter validation ---------------------------------------------------
+    delta = (utc_dt - datetime.utcnow()).total_seconds()
+    if delta <= _MIN_LEAD:         # must be > 60 s *in the future*
+        raise ValueError(
+            f"`exec_at` must be at least {_MIN_LEAD} s in the future "
+            f"(Δ={delta:.1f}s)"
+        )
 
     return utc_dt.isoformat(timespec="seconds")
-
 
 # ── infrastructure helpers ──────────────────────────────────────────
 def _internal_base() -> str:
