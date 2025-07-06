@@ -2,17 +2,15 @@
 """
 Orchestrator that waits until *exec_at_utc* then calls ``execute_prompt``.
 
-Fix (July 2025 r2)
-──────────────────
-Durable-Functions Python 1.2.x will resume a timer only when the deadline
-is a **naïve** UTC ``datetime`` (i.e. ``tzinfo is None``).  
-Passing an aware value such as “2025-07-06T00:12:42+00:00” leaves the
-instance forever in *Running*.
+After upgrading **azure-functions-durable** to 1.3.2 the “timer-plus-activity
+race” is fixed, but the orchestration now fails early if we compare an
+offset-naïve datetime with an offset-aware one.
 
-We therefore:
-    • parse the incoming string (which may contain “+00:00”),  
-    • convert it to UTC, and **strip the tzinfo**,  
-    • feed the resulting naïve value into ``ctx.create_timer``.
+Fix (July 2025 r3)
+──────────────────
+* Keep **both** `exec_at` **and** `now_utc` *offset-aware* (UTC).  
+  This removes the “can’t compare offset-naive and offset-aware datetimes”
+  exception that caused *runtimeStatus = Failed*.
 """
 from __future__ import annotations
 
@@ -36,14 +34,12 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
         },
     )
 
-    # ── normalise datetimes -------------------------------------------------
+    # ── normalise datetimes – both **aware UTC** ---------------------------
     exec_at = datetime.fromisoformat(data["exec_at_utc"])
-    # make sure it is UTC, then **strip tzinfo** → naïve UTC
-    if exec_at.tzinfo is None:
+    if exec_at.tzinfo is None:                      # safeguard – shouldn’t happen
         exec_at = exec_at.replace(tzinfo=timezone.utc)
-    exec_at = exec_at.astimezone(timezone.utc).replace(tzinfo=None)
 
-    now_utc = ctx.current_utc_datetime.replace(tzinfo=None)  # naïve UTC
+    now_utc = ctx.current_utc_datetime              # aware UTC (tzinfo = UTC)
 
     # ensure the timer is strictly in the future ----------------------------
     fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)
@@ -58,7 +54,7 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
         )
 
     # ── wait & execute ------------------------------------------------------
-    yield ctx.create_timer(fire_at)
+    yield ctx.create_timer(fire_at)                 # aware UTC accepted in 1.3.x
     result = yield ctx.call_activity("execute_prompt", data)
 
     # ── deregister & finish -------------------------------------------------
