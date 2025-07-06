@@ -23,12 +23,12 @@ _log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────
 # Pydantic models
-# ----------------------------------------------------------------------
+# ---------------------------------------------------------------------
 class ScheduleRequest(BaseModel):
     exec_at: str = Field(
         ...,
-        description="*Naive* ISO-8601 datetime **in HKT** "
-        "(e.g. 2025-07-06T15:30:00 – must be ≥ 60 s in the future)",
+        description="ISO-8601 datetime **with offset** "
+        "(e.g. 2025-07-06T15:30:00+08:00 or +00:00 – must be ≥ 60 s in the future)",
     )
     prompt_type: str = Field(..., description="e.g. `log.append`, `http.call`")
     payload: dict[str, Any] = Field(

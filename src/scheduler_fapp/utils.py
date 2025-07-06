@@ -3,10 +3,12 @@
 Shared helpers for the Durable-scheduler Function-App.
 Keeps business logic out of the individual Azure Functions.
 
-Key change (July 2025):
-    • `parse_hkt_to_utc` now returns a **timezone-aware UTC string**
-      (e.g. “2025-07-05T16:59:53+00:00”) instead of a naïve one.
-      Durable-Functions Python ≥1.2.x requires aware values for timers.
+Key change (July 2025)
+──────────────────────
+All internal code now works exclusively with **UTC-aware ISO strings**
+(e.g. “2025-07-05T16:59:53+00:00”).  
+`to_utc_iso()` is the single normaliser; the previous
+`parse_hkt_to_utc()` remains as a thin alias for back-compat.
 """
 from __future__ import annotations
 
@@ -17,55 +19,59 @@ import requests
 
 # ── constants ────────────────────────────────────────────────────────
 try:
-    from zoneinfo import ZoneInfo          # Python 3.9+
+    from zoneinfo import ZoneInfo  # Python 3.9+
     _HKT = ZoneInfo("Asia/Hong_Kong")
-except Exception:                          # pragma: no cover
+except Exception:                  # pragma: no cover
     logging.warning(
         "tzdata for 'Asia/Hong_Kong' not found – "
         "falling back to fixed UTC+8 offset"
     )
     _HKT = timezone(timedelta(hours=8), name="HKT")
 
-_MIN_LEAD = 60          # seconds – must schedule ≥ 1 min ahead
+_MIN_LEAD = 60  # seconds – must schedule ≥ 1 min ahead
+
 
 # ── time helpers ─────────────────────────────────────────────────────
-def parse_hkt_to_utc(exec_at_str: str) -> str:
+def to_utc_iso(ts: str) -> str:
     """
-    Convert an ISO-8601 **HKT** timestamp into a **timezone-aware UTC string**.
+    Convert *any* ISO-8601 timestamp into a timezone-aware **UTC** ISO string
+    (keeps seconds precision and the “+00:00” offset).
 
-    Durable-Functions Python 1.2.x requires *aware* datetimes for `create_timer`.
-    We therefore **keep** the “+00:00” offset in the returned string.
+    If the input is naïve (no zone information) we assume **Hong Kong Time**,
+    preserving existing clients that always sent HKT.
 
     Raises
     ------
     ValueError
         • If the string is not ISO-8601  
-        • If the requested time is less than 60 s in the future (UTC)
+        • If the requested time is < 60 s in the future (UTC)
     """
     try:
-        hkt_dt = datetime.fromisoformat(exec_at_str)           # naïve or aware
+        dt = datetime.fromisoformat(ts)          # naïve *or* aware
     except ValueError as exc:
-        raise ValueError("`exec_at` must be an ISO-8601 datetime "
-                         "(YYYY-MM-DDThh:mm)") from exc
-
-    # attach HKT zone then convert to aware UTC ------------------------------
-    if hkt_dt.tzinfo is None:
-        hkt_dt = hkt_dt.replace(tzinfo=_HKT)
-    else:
-        hkt_dt = hkt_dt.astimezone(_HKT)
-
-    utc_dt_aware = hkt_dt.astimezone(timezone.utc)
-
-    # ── stricter validation --------------------------------------------------
-    delta = (utc_dt_aware - datetime.now(timezone.utc)).total_seconds()
-    if delta <= _MIN_LEAD:
         raise ValueError(
-            f"`exec_at` must be at least {_MIN_LEAD} s in the future "
-            f"(Δ={delta:.1f}s)"
+            "`exec_at` must be ISO-8601 (YYYY-MM-DDThh:mm[:ss])"
+        ) from exc
+
+    if dt.tzinfo is None:                        # default to HKT
+        dt = dt.replace(tzinfo=_HKT)
+    else:
+        dt = dt.astimezone(_HKT)                 # normalise first
+
+    utc_aware = dt.astimezone(timezone.utc)
+
+    delta = (utc_aware - datetime.now(timezone.utc)).total_seconds()
+    if delta < _MIN_LEAD:
+        raise ValueError(
+            f"`exec_at` must be at least {_MIN_LEAD} s in the future (Δ={delta:.1f}s)"
         )
 
-    # keep seconds precision **with offset**
-    return utc_dt_aware.isoformat(timespec="seconds")
+    return utc_aware.isoformat(timespec="seconds")
+
+
+# Back-compat alias – will be removed in a future major revision
+parse_hkt_to_utc = to_utc_iso
+
 
 # ── infrastructure helpers ──────────────────────────────────────────
 def _internal_base() -> str:
@@ -89,11 +95,14 @@ def _internal_base() -> str:
 
     return "http://localhost:8000"
 
+
 # ── logging helper ──────────────────────────────────────────────────
-def log_to_api(level: str,
-               message: str,
-               secondary_tag: str = "scheduler",
-               tertiary_tag: str | None = None):
+def log_to_api(
+    level: str,
+    message: str,
+    secondary_tag: str = "scheduler",
+    tertiary_tag: str | None = None,
+):
     """
     Fire-and-forget wrapper around the existing `/api/log` endpoint.
 
@@ -101,15 +110,16 @@ def log_to_api(level: str,
     """
     url = f"{_internal_base()}/api/log"
     payload = {
-        "tag":           secondary_tag,
-        "tertiary_tag":  tertiary_tag,
-        "base":          level,
-        "message":       message,
+        "tag": secondary_tag,
+        "tertiary_tag": tertiary_tag,
+        "base": level,
+        "message": message,
     }
     try:
         requests.post(url, json=payload, timeout=10).raise_for_status()
-    except Exception as exc:                       # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logging.warning("Log API call failed: %s", exc)
+
 
 # ── prompt dispatch table ────────────────────────────────────────────
 def _log_append(payload: dict):
@@ -119,14 +129,14 @@ def _log_append(payload: dict):
     resp.raise_for_status()
     return resp.json()
 
+
 PROMPTS: dict[str, callable[[dict], object]] = {
     "log.append": _log_append,
-    "http.call":  lambda p: requests.post(
-        p["url"],
-        json=p.get("body"),
-        timeout=p.get("timeout", 10)
+    "http.call": lambda p: requests.post(
+        p["url"], json=p.get("body"), timeout=p.get("timeout", 10)
     ).json(),
 }
+
 
 def execute_prompt(prompt_type: str, payload: dict):
     """Dispatch to the requested prompt handler."""
