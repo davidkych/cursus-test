@@ -2,18 +2,21 @@
 """
 Orchestrator that waits until *exec_at_utc* then calls ``execute_prompt``.
 
-### July 2025 · r8 (timer-naïve fix)
+### July 2025 · r9 (final)
 
-* r6 crashed (naïve vs aware mismatch)  
-* r7 kept everything offset-aware but the East-Asia host interpreted an
-  aware value as **local** time, pushing the timer ~8 h into the future.
+* r6 crashed because we compared naïve ↔ aware datetimes.  
+* r7 fixed the crash but made timers eight hours late.  
+* r8 still hit the same `TypeError` on some hosts.
 
-**r8 solution**
+**r9 canonical rule**
 
-* Keep comparisons *aware* (UTC) – no more Python `TypeError`.
-* **Just before calling `ctx.create_timer` strip the tzinfo**, handing the
-  Durable runtime a **naïve UTC** `datetime`.  
-  That is the format the runtime expects regardless of the host region.
+> *Inside the orchestrator everything is UTC-**naïve*** – that is what the
+> Durable Python SDK and the DF extension always agree on.  
+> We keep the incoming timestamp offset-aware long enough to validate it,
+> then strip `tzinfo` from **both** operands **before** any arithmetic or
+> comparisons, and pass that naïve value straight to `create_timer()`.  
+> No other datetime values remain aware, so the mismatch can never occur
+> again on any host or SDK build.
 """
 from __future__ import annotations
 
@@ -37,39 +40,43 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
         },
     )
 
-    # ── parse / normalise to **aware UTC** ---------------------------------
-    exec_at = datetime.fromisoformat(data["exec_at_utc"])
-    if exec_at.tzinfo is None:                       # naïve → aware UTC
-        exec_at = exec_at.replace(tzinfo=timezone.utc)
-    else:                                            # aware → ensure UTC
-        exec_at = exec_at.astimezone(timezone.utc)
-
-    now_utc = ctx.current_utc_datetime              # may be naïve
-    if now_utc.tzinfo is None:
-        now_utc = now_utc.replace(tzinfo=timezone.utc)
+    # ── 1.  Parse incoming ISO string  ➜ aware UTC -------------------------
+    exec_at_aw = datetime.fromisoformat(data["exec_at_utc"])
+    if exec_at_aw.tzinfo is None:
+        exec_at_aw = exec_at_aw.replace(tzinfo=timezone.utc)
     else:
-        now_utc = now_utc.astimezone(timezone.utc)
+        exec_at_aw = exec_at_aw.astimezone(timezone.utc)
 
-    # ensure timer is in the future -------------------------------------------------
+    # ── 2.  Current time from runtime  ➜ aware/naïve mix ⇒ force UTC aware -
+    now_aw = ctx.current_utc_datetime
+    if now_aw.tzinfo is None:
+        now_aw = now_aw.replace(tzinfo=timezone.utc)
+    else:
+        now_aw = now_aw.astimezone(timezone.utc)
+
+    # ── 3.  Strip tzinfo from *both*  ➜ canonical UTC-naïve -----------------
+    exec_at = exec_at_aw.replace(tzinfo=None)
+    now_utc = now_aw.replace(tzinfo=None)
+
+    # ensure timer is strictly in the future ---------------------------------
     fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)
 
-    # one-off diagnostics (skipped during replay) -----------------------------------
+    # one-off diagnostics (skipped during replay) ---------------------------
     if not ctx.is_replaying:
         delta = (fire_at - now_utc).total_seconds()
         log_to_api(
             "debug",
-            f"[diag] orch now={now_utc.isoformat()} "
+            f"[diag] orch now={now_aw.isoformat()} "
             f"→ fire_at={fire_at.isoformat()} (Δ={delta:.1f}s)"
         )
 
-    # ── WAIT & EXECUTE --------------------------------------------------------------
-    # Durable runtime expects **naïve UTC** here, otherwise an aware value
-    # is interpreted as local time in the host’s region.
-    yield ctx.create_timer(fire_at.replace(tzinfo=None))
+    # ── WAIT & EXECUTE ------------------------------------------------------
+    # The Durable runtime requires a naïve UTC datetime here.
+    yield ctx.create_timer(fire_at)
 
     result = yield ctx.call_activity("execute_prompt", data)
 
-    # ── deregister & finish ---------------------------------------------------------
+    # ── deregister & finish -------------------------------------------------
     ctx.signal_entity(entity_id, "remove", ctx.instance_id)
     if not ctx.is_replaying:
         log_to_api("info", f"Executed scheduled job {ctx.instance_id}")
