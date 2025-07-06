@@ -1,4 +1,3 @@
-# ── src/scheduler_fapp/execute_prompt/__init__.py ────────────────────
 """
 Durable **activity** that performs the real work – executing one prompt.
 
@@ -11,9 +10,9 @@ succeeds (fire-and-forget semantics).
 import logging
 from utils import execute_prompt, log_to_api
 
-def main(data: dict):  # noqa: D401
-    prompt_type = data.get("prompt_type")
-    payload     = data.get("payload")
+def main(name: dict):  # noqa: D401
+    prompt_type = name.get("prompt_type")
+    payload     = name.get("payload")
 
     try:
         result = execute_prompt(prompt_type, payload)

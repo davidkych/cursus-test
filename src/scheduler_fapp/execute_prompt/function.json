@@ -3,9 +3,9 @@
   "entryPoint": "main",
   "bindings": [
     {
-      "name": "data",
       "type": "activityTrigger",
-      "direction": "in"
+      "direction": "in",
+      "name": "name"
     }
   ]
 }
