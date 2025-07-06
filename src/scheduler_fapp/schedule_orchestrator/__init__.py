@@ -2,17 +2,19 @@
 """
 Orchestrator that waits until *exec_at_utc* then calls ``execute_prompt``.
 
-Durable-Functions ≤ 1.3.x returns **naïve** UTC from
-``ctx.current_utc_datetime``.  If we keep *exec_at* timezone-aware we end up
-comparing an aware datetime with a naïve one →  
-``TypeError: can't compare offset-naive and offset-aware datetimes``.
+### July 2025 · r6 (final)
 
-**July 2025 r5 — final fix**
+Durable Functions 1.3.x returns **offset-aware** UTC from  
+``ctx.current_utc_datetime`` **on some hosts but offset-naïve on others**  
+(depending on the underlying extension build).  
+To guarantee we never mix the two kinds we now:
 
-* **Normalise both datetimes to *naïve* UTC.**  
-  We strip the ``tzinfo`` from *exec_at* (after converting to UTC if necessary)
-  so the comparison is always “naïve vs naïve”.
-* Rest of the logic unchanged.
+1. **Force *both* timestamps to offset-naïve UTC**  
+   – strip any ``tzinfo`` after converting to UTC.
+2. Leave the rest of the logic unchanged.
+
+With this normalisation the “can’t compare offset-naïve and offset-aware
+datetimes” exception cannot occur and the timer fires as expected.
 """
 from __future__ import annotations
 
@@ -38,10 +40,12 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
 
     # ── normalise datetimes – both **naïve UTC** ---------------------------
     exec_at = datetime.fromisoformat(data["exec_at_utc"])
-    if exec_at.tzinfo is not None:                    # strip offset → naïve UTC
+    if exec_at.tzinfo is not None:                        # aware  → naive UTC
         exec_at = exec_at.astimezone(timezone.utc).replace(tzinfo=None)
 
-    now_utc = ctx.current_utc_datetime               # already naïve UTC
+    now_utc = ctx.current_utc_datetime                   # may be aware or naive
+    if now_utc.tzinfo is not None:                       # make it naive as well
+        now_utc = now_utc.replace(tzinfo=None)
 
     # ensure the timer is strictly in the future ----------------------------
     fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)
@@ -56,7 +60,7 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
         )
 
     # ── wait & execute ------------------------------------------------------
-    yield ctx.create_timer(fire_at)                 # naïve UTC accepted in 1.3.x
+    yield ctx.create_timer(fire_at)                     # naïve UTC works on 1.3.x
     result = yield ctx.call_activity("execute_prompt", data)
 
     # ── deregister & finish -------------------------------------------------
