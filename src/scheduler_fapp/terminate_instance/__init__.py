@@ -10,7 +10,8 @@ async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:  # noqa
 
     Anonymous helper that lets the FastAPI façade cancel a pending
     orchestration *without* needing the management key.  Mirrors the
-    behaviour of the existing /api/status/{instanceId} endpoint.
+    behaviour of the existing /api/status/{instanceId} endpoint,
+    and now also cleans up the registry entity.
     """
     instance_id = req.route_params.get("instanceId")
     if not instance_id:
@@ -21,17 +22,25 @@ async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:  # noqa
         )
 
     try:
-        dclient = df.DurableOrchestrationClient(client)
-        await dclient.terminate(instance_id, "user cancelled")
+        client_api = df.DurableOrchestrationClient(client)
 
-        # (optional) purge so the instance disappears from /api/schedules
+        # terminate and purge the orchestration
+        await client_api.terminate(instance_id, "user cancelled")
         try:
-            await dclient.purge_instance_history(instance_id)
+            await client_api.purge_instance_history(instance_id)
         except Exception:
-            pass
+            logging.warning("Purge failed for %s; continuing cleanup", instance_id)
 
-        return func.HttpResponse(status_code=202)          # Accepted
-    except Exception as exc:                               # noqa: BLE001
+        # now signal the registry entity to remove this id
+        try:
+            entity_id = df.EntityId("schedule_entity", "registry")
+            await client_api.signal_entity(entity_id, "remove", instance_id)
+        except Exception:
+            logging.warning("Failed to signal entity removal for %s", instance_id)
+
+        return func.HttpResponse(status_code=202)  # Accepted
+
+    except Exception as exc:  # noqa: BLE001
         logging.exception("terminate_instance failed")
         return func.HttpResponse(
             json.dumps({"error": str(exc), "type": exc.__class__.__name__}),
