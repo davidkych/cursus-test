@@ -2,15 +2,17 @@
 """
 Orchestrator that waits until *exec_at_utc* then calls ``execute_prompt``.
 
-Durable-Functions Python ≤ 1.3.x will resume a timer **only** when the deadline
-is a *naïve* (offset-free) UTC ``datetime``.  Passing an aware value
-(`+00:00`) silently stalls the orchestration.
+Durable-Functions ≤ 1.3.x returns **naïve** UTC from
+``ctx.current_utc_datetime``.  If we keep *exec_at* timezone-aware we end up
+comparing an aware datetime with a naïve one →  
+``TypeError: can't compare offset-naive and offset-aware datetimes``.
 
-Fix (July 2025 r4)
-──────────────────
-* Convert **both** `exec_at` **and** `now_utc` to *naïve* UTC before comparison
-  **and** before calling ``create_timer``.  
-  This avoids the “ignored timer” bug while still keeping the comparison legal.
+**July 2025 r5 — final fix**
+
+* **Normalise both datetimes to *naïve* UTC.**  
+  We strip the ``tzinfo`` from *exec_at* (after converting to UTC if necessary)
+  so the comparison is always “naïve vs naïve”.
+* Rest of the logic unchanged.
 """
 from __future__ import annotations
 
@@ -34,29 +36,27 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
         },
     )
 
-    # ── normalise datetimes – convert to **naïve UTC** ---------------------
-    exec_at_aware = datetime.fromisoformat(data["exec_at_utc"])
-    if exec_at_aware.tzinfo is None:                # tolerate naïve input
-        exec_at_aware = exec_at_aware.replace(tzinfo=timezone.utc)
-    exec_at = exec_at_aware.astimezone(timezone.utc).replace(tzinfo=None)
+    # ── normalise datetimes – both **naïve UTC** ---------------------------
+    exec_at = datetime.fromisoformat(data["exec_at_utc"])
+    if exec_at.tzinfo is not None:                    # strip offset → naïve UTC
+        exec_at = exec_at.astimezone(timezone.utc).replace(tzinfo=None)
 
-    now_aware = ctx.current_utc_datetime            # aware UTC
-    now_utc   = now_aware.replace(tzinfo=None)      # ← make naïve
+    now_utc = ctx.current_utc_datetime               # already naïve UTC
 
     # ensure the timer is strictly in the future ----------------------------
     fire_at = exec_at if exec_at > now_utc else now_utc + timedelta(seconds=1)
 
-    # diagnostics once per run (skipped during replay) ----------------------
+    # one-off diagnostics (skipped during replay) ---------------------------
     if not ctx.is_replaying:
         delta = (fire_at - now_utc).total_seconds()
         log_to_api(
             "debug",
-            f"[diag] orch now={now_aware.isoformat()} "
+            f"[diag] orch now={now_utc.isoformat()} "
             f"→ fire_at={fire_at.isoformat()} (Δ={delta:.1f}s)"
         )
 
     # ── wait & execute ------------------------------------------------------
-    yield ctx.create_timer(fire_at)                 # needs naïve UTC
+    yield ctx.create_timer(fire_at)                 # naïve UTC accepted in 1.3.x
     result = yield ctx.call_activity("execute_prompt", data)
 
     # ── deregister & finish -------------------------------------------------
