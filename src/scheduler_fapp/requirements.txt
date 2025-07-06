@@ -2,7 +2,7 @@
 azure-functions==1.20.0
 
 # Durable Functions (bindings + Python SDK)
-azure-functions-durable==1.2.6
+azure-functions-durable==1.4.2   
 
 # Anything your activities/orchestrations might need
 requests>=2.32.0
