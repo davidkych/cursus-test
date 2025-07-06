@@ -1,0 +1,107 @@
+name: Deploy Scheduler
+
+on:
+  workflow_call:
+    inputs:
+      rg:         { type: string, required: true }
+      app:        { type: string, required: true }
+      cosmos:     { type: string, required: true }
+      sched_func: { type: string, required: true }
+      timeout:    { type: number, required: false, default: 1800 }
+    secrets:
+      AZURE_CLIENT_ID:      { required: true }
+      AZURE_TENANT_ID:      { required: true }
+      AZURE_SUBSCRIPTION_ID:{ required: true }
+
+jobs:
+  deploy-scheduler:
+    runs-on: ubuntu-latest
+    env:
+      RG:         ${{ inputs.rg }}
+      APP:        ${{ inputs.app }}
+      COSMOS:     ${{ inputs.cosmos }}
+      SCHED_FUNC: ${{ inputs.sched_func }}
+      TIMEOUT:    ${{ inputs.timeout }}
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+          cache: pip
+
+      - uses: azure/login@v1
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Vendor scheduler deps & ZIP
+        shell: bash
+        run: |
+          set -eo pipefail
+          pushd src/scheduler_fapp
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r requirements.txt \
+                                 --target .python_packages/lib/site-packages
+          zip -qr ../../sched.zip . .python_packages
+          popd
+          du -h sched.zip | cut -f1 | xargs echo "📦 scheduler zip size:"
+
+      - name: ZIP-deploy Function-App
+        shell: bash
+        run: |
+          set -eo pipefail
+          for attempt in 1 2 3; do
+            echo "🚀 ZIP deploy attempt $attempt"
+            if az functionapp deployment source config-zip \
+                   -g $RG -n $SCHED_FUNC --src sched.zip --timeout 240; then
+              echo "✅ scheduler zip deploy succeeded"; break
+            fi
+            echo "⚠️ attempt $attempt failed – backing off $((attempt*30)) s"
+            sleep $((attempt*30))
+          done
+
+          status=$(az functionapp show -g $RG -n $SCHED_FUNC --query state -o tsv)
+          [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
+
+          echo "🚀 scheduler running – tailing log 60 s …"
+          timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
+
+      - name: Verify scheduler health
+        shell: bash
+        run: |
+          set -eo pipefail
+          url="https://$SCHED_FUNC.azurewebsites.net/api/healthz"
+          for attempt in {1..10}; do
+            code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
+            [[ "$code" == "200" ]] && { cat /tmp/healthz.json || true; exit 0; }
+            echo "⌛ not ready (HTTP $code) – wait 15 s"; sleep 15
+          done
+          echo "💥 health check failed"; exit 1
+
+      - name: Grant Cosmos role (scheduler MSI)
+        run: |
+          set -eo pipefail
+          principalId=$(az webapp identity show -g $RG -n $SCHED_FUNC --query principalId -o tsv)
+          roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
+                   --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+          az cosmosdb sql role assignment create -g $RG --account-name $COSMOS \
+            --principal-id $principalId --role-definition-id $roleId --scope "/" || true
+          echo "✅ scheduler MSI granted data-plane role"
+
+      - name: Update web-app with scheduler settings
+        run: |
+          set -eo pipefail
+          sched_base="https://$SCHED_FUNC.azurewebsites.net"
+          az webapp config appsettings set -g $RG -n $APP --settings \
+            SCHEDULER_BASE_URL=$sched_base \
+            SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
+            SCHEDULER_MGMT_KEY=""
+          echo "🔗 web-app now knows scheduler base $sched_base"
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-log
+          path: sched.log

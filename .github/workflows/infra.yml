@@ -1,47 +1,35 @@
-name: Provision infrastructure (Bicep)
+name: Provision Infra
 
 on:
   workflow_call:
     inputs:
-      RG:
-        description: Resource group name
-        required: true
-        type: string
-      PLAN_SKU:
-        description: App Service plan SKU
-        required: true
-        type: string
-      TIMEOUT:
-        description: Deployment timeout
-        required: true
-        type: string
+      rg:         { type: string,  required: true }
+      location:   { type: string,  required: true }
+      app:        { type: string,  required: true }
+      plan_sku:   { type: string,  required: true }
+      timeout:    { type: number,  required: false, default: 1800 }
     secrets:
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true
+      AZURE_CLIENT_ID:      { required: true }
+      AZURE_TENANT_ID:      { required: true }
+      AZURE_SUBSCRIPTION_ID:{ required: true }
     outputs:
-      cosmos:
-        description: Cosmos DB account name
-      sched_func:
-        description: Scheduler Function name
+      cosmos:      { description: Cosmos account name,          value: ${{ jobs.provision.outputs.cosmos }} }
+      sched_func:  { description: Scheduler Function-App name,  value: ${{ jobs.provision.outputs.sched_func }} }
 
 jobs:
-  infra:
+  provision:
     runs-on: ubuntu-latest
     outputs:
-      cosmos: ${{ steps.infra.outputs.cosmos }}
+      cosmos:     ${{ steps.infra.outputs.cosmos }}
       sched_func: ${{ steps.infra.outputs.sched_func }}
-
+    env:
+      RG:        ${{ inputs.rg }}
+      LOCATION:  ${{ inputs.location }}
+      APP:       ${{ inputs.app }}
+      PLAN_SKU:  ${{ inputs.plan_sku }}
+      TIMEOUT:   ${{ inputs.timeout }}
     steps:
       - uses: actions/checkout@v3
-
-      - uses: actions/setup-python@v4
-        with:
-          python-version: "3.9"
-          cache: pip
 
       - uses: azure/login@v1
         with:
@@ -57,19 +45,15 @@ jobs:
 
           az deployment group create \
             --name $DEPLOY_NAME \
-            --resource-group ${{ inputs.RG }} \
+            --resource-group $RG \
             --template-file infra/main.bicep \
-            --parameters planSkuName=${{ inputs.PLAN_SKU }} timeout=${{ inputs.TIMEOUT }}
+            --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
 
-          COSMOS=$(az deployment group show \
-                     -g ${{ inputs.RG }} -n $DEPLOY_NAME \
-                     --query "properties.outputs.cosmosAccountName.value" -o tsv)
-          SCHED_FUNC=$(az deployment group show \
-                         -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+          COSMOS=$(az deployment group show -g $RG -n $DEPLOY_NAME \
+                    --query "properties.outputs.cosmosAccountName.value" -o tsv)
+          SCHED_FUNC=$(az deployment group show -g $RG -n $DEPLOY_NAME \
                          --query "properties.outputs.schedulerFunctionName.value" -o tsv)
 
-          echo "COSMOS=$COSMOS"         >> $GITHUB_ENV
-          echo "SCHED_FUNC=$SCHED_FUNC" >> $GITHUB_ENV
           echo "cosmos=$COSMOS"         >> $GITHUB_OUTPUT
           echo "sched_func=$SCHED_FUNC" >> $GITHUB_OUTPUT
           echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED_FUNC"

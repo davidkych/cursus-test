@@ -1,36 +1,27 @@
-name: Deploy web app (FastAPI)
+name: Deploy Web-App
 
 on:
   workflow_call:
     inputs:
-      RG:
-        description: Resource group name
-        required: true
-        type: string
-      APP:
-        description: Web-app name
-        required: true
-        type: string
-      TIMEOUT:
-        description: Deployment timeout
-        required: true
-        type: string
-      COSMOS:
-        description: Cosmos account name
-        required: true
-        type: string
+      rg:       { type: string, required: true }
+      location: { type: string, required: true }
+      app:      { type: string, required: true }
+      cosmos:   { type: string, required: true }
+      timeout:  { type: number, required: false, default: 1800 }
     secrets:
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
-        required: true
+      AZURE_CLIENT_ID:      { required: true }
+      AZURE_TENANT_ID:      { required: true }
+      AZURE_SUBSCRIPTION_ID:{ required: true }
 
 jobs:
   deploy-webapp:
     runs-on: ubuntu-latest
-
+    env:
+      RG:       ${{ inputs.rg }}
+      LOCATION: ${{ inputs.location }}
+      APP:      ${{ inputs.app }}
+      COSMOS:   ${{ inputs.cosmos }}
+      TIMEOUT:  ${{ inputs.timeout }}
     steps:
       - uses: actions/checkout@v3
 
@@ -43,9 +34,9 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install --only-binary=:all: --prefer-binary \
-            --no-cache-dir \
-            -r src/requirements.txt \
-            --target src/.python_packages
+                      --no-cache-dir \
+                      -r src/requirements.txt \
+                      --target src/.python_packages
 
       - uses: azure/login@v1
         with:
@@ -56,28 +47,26 @@ jobs:
       - name: Grant Cosmos “Built-in Data Contributor” role (web-app)
         run: |
           set -eo pipefail
-          principalId=$(az webapp identity show -g ${{ inputs.RG }} -n ${{ inputs.APP }} --query principalId -o tsv)
-          roleId=$(az cosmosdb sql role definition list -g ${{ inputs.RG }} --account-name ${{ inputs.COSMOS }} \
+          principalId=$(az webapp identity show -g $RG -n $APP --query principalId -o tsv)
+          roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
                    --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
-          az cosmosdb sql role assignment create -g ${{ inputs.RG }} -n ${{ inputs.COSMOS }} \
-            --principal-id $principalId \
-            --role-definition-id $roleId \
-            --scope "/" || true
+          az cosmosdb sql role assignment create -g $RG --account-name $COSMOS \
+            --principal-id $principalId --role-definition-id $roleId --scope "/" || true
           echo "✅ web-app MSI granted data-plane role"
 
       - name: Configure Web-App settings
         run: |
-          az webapp config appsettings set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --settings \
+          az webapp config appsettings set -g $RG -n $APP --settings \
             WEBSITE_RUN_FROM_PACKAGE=0 \
             SCM_DO_BUILD_DURING_DEPLOYMENT=false \
             WEBSITES_PORT=8000 \
             PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/.python_packages" \
-            WEBSITES_CONTAINER_START_TIME_LIMIT=${{ inputs.TIMEOUT }} \
+            WEBSITES_CONTAINER_START_TIME_LIMIT=$TIMEOUT \
             WEBSITES_STARTUP_COMMAND="gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app" \
             WEBSITES_LOG_MESSAGE_LEVEL=Verbose \
             SCM_LOGSTREAM_TIMEOUT=240
-          az webapp config set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --always-on true
-          az webapp log config -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
+          az webapp config set -g $RG -n $APP --always-on true
+          az webapp log config -g $RG -n $APP \
             --application-logging filesystem \
             --detailed-error-messages true \
             --failed-request-tracing true
@@ -93,44 +82,36 @@ jobs:
           success=false
           for attempt in 1 2; do
             echo "🚀 ZIP-deploy attempt $attempt"
-            az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} --src-path app.zip --type zip --timeout 200 || true
+            az webapp deploy -g $RG -n $APP --src-path app.zip --type zip --timeout 200 || true
 
             echo "📡 streaming container log 90 s …"
-            timeout 90s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
+            timeout 90s az webapp log tail -g $RG -n $APP | tee live.log || true
             sleep 10
 
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
             if [[ "$code" == "200" ]]; then
               echo "✅ healthy"
               success=true
               break
             fi
-
             echo "⚠ unhealthy (HTTP $code) – backing off"
             sleep $((attempt*45))
           done
 
-          if ! $success; then
-            echo "💥 web-app deploy failed after 2 attempts"
-            exit 1
-          fi
+          $success || { echo "💥 web-app deploy failed"; exit 1; }
 
-      - name: Restart web-app (force recycle after deploy)
+      - name: Restart web-app (force recycle)
         shell: bash
         run: |
           set -eo pipefail
-          echo "♻️  Restarting ${{ inputs.APP }} …"
-          az webapp restart -g ${{ inputs.RG }} -n ${{ inputs.APP }}
-
-          echo "🔄 waiting for fresh container …"
+          echo "♻️ Restarting $APP …"
+          az webapp restart -g $RG -n $APP
           for i in {1..12}; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
             [[ "$code" == "200" ]] && { echo "✅ new container ready"; exit 0; }
             sleep 5
           done
-
-          echo "💥 container did not become healthy in time"
-          exit 1
+          echo "💥 container did not become healthy in time"; exit 1
 
       - if: failure()
         uses: actions/upload-artifact@v4
