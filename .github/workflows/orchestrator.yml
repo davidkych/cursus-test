@@ -1,3 +1,4 @@
+# ── .github/workflows/orchestrator.yml ───────────────────────────────
 name: Azure Deployment (Test) – Orchestrator
 
 on:
@@ -20,11 +21,11 @@ jobs:
   infra:
     uses: ./.github/workflows/infra.yml
     with:
-      rg:        ${{ env.RG }}
-      location:  ${{ env.LOCATION }}
-      app:       ${{ env.APP }}
-      plan_sku:  ${{ env.PLAN_SKU }}
-      timeout:   ${{ env.TIMEOUT }}
+      rg:         ${{ env.RG }}
+      location:   ${{ env.LOCATION }}
+      app:        ${{ env.APP }}
+      plan_sku:   ${{ env.PLAN_SKU }}
+      timeout:    ${{ env.TIMEOUT }}
     secrets: inherit
 
   webapp:
@@ -39,7 +40,7 @@ jobs:
     secrets: inherit
 
   scheduler:
-    needs: webapp           # preserves strict linear order
+    needs: webapp
     uses: ./.github/workflows/scheduler.yml
     with:
       rg:         ${{ env.RG }}
