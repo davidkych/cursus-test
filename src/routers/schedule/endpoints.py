@@ -102,12 +102,24 @@ def _status_url(instance_id: str) -> str:
 
 
 def _terminate_url(instance_id: str) -> str:
-    return (
-        f"{_scheduler_base()}/runtime/webhooks/durabletask/instances/"
-        f"{instance_id}/terminate?reason=user+cancelled{_mgmt_key_qs()}"
-    )
+    """
+    Build a termination URL that works **with or without** a management key.
 
+    • If a key is configured → use the Durable management endpoint  
+    • If no key            → fall back to the new anonymous helper
+                             /api/terminate/{instanceId}
+    """
+    key_segment = _mgmt_key_qs()          # ''  or  '&code=<key>'
+    if key_segment:
+        return (
+            f"{_scheduler_base()}/runtime/webhooks/durabletask/instances/"
+            f"{instance_id}/terminate?reason=user+cancelled{key_segment}"
+        )
 
+    # no key ⇒ anonymous route inside the Function-App
+    return f"{_scheduler_base()}/api/terminate/{instance_id}"
+
+    
 def _forward_error(resp: requests.Response) -> None:
     """
     Mirror the scheduler’s failure payload back to the caller **with context**
