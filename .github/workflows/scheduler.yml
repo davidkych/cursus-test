@@ -24,10 +24,7 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
-  # ← Allow manual runs from Actions UI
-  workflow_dispatch:  
-
-  # ← Auto-run only when scheduler code changes
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
@@ -128,3 +125,10 @@ jobs:
             SCHEDULER_BASE_URL="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net" \
             SCHEDULER_FUNCTION_NAME="${{ inputs.SCHED_FUNC }}" \
             SCHEDULER_MGMT_KEY=""
+
+      # ── re-added artifact upload on failure ───────────────────────────────
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-log
+          path: sched.log

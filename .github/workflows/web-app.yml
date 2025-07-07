@@ -27,10 +27,7 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
-  # ← Allow manual runs from Actions UI
   workflow_dispatch:
-
-  # ← Auto-run only when web-app code (but not scheduler) changes
   push:
     branches: [ main ]
     paths:
@@ -69,6 +66,9 @@ jobs:
                    --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
           az cosmosdb sql role assignment create -g ${{ inputs.RG }} -n ${{ inputs.COSMOS }} \
             --principal-id $principalId --role-definition-id $roleId --scope "/" || true
+
+          # ── re-added confirmation echo ───────────────────────────────────────
+          echo "✅ web-app MSI granted data-plane role"
 
       - name: Configure Web-App settings
         run: |

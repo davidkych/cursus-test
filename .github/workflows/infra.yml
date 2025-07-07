@@ -65,3 +65,6 @@ jobs:
 
           echo "cosmos=$COSMOS"    >> $GITHUB_OUTPUT
           echo "sched_func=$SCHED" >> $GITHUB_OUTPUT
+
+          # ── re-added friendly status message ─────────────────────────────────
+          echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED"
