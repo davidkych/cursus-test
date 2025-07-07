@@ -49,6 +49,7 @@ jobs:
     uses: ./.github/workflows/scheduler.yml
     with:
       RG:         cursus-test-rg
+      APP:        cursus-test-app       # ← passed here
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:

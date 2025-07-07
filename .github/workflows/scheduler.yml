@@ -7,6 +7,9 @@ on:
       RG:
         required: true
         type: string
+      APP:                # ← New input
+        required: true
+        type: string
       SCHED_FUNC:
         required: true
         type: string
@@ -60,7 +63,6 @@ jobs:
             fi
             sleep $((attempt*30))
           done
-
           status=$(az functionapp show -g ${{ inputs.RG }} -n ${{ inputs.SCHED_FUNC }} --query state -o tsv)
           [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
 
@@ -78,6 +80,7 @@ jobs:
           exit 1
 
       - name: Grant Cosmos Data Contributor to Scheduler MSI
+        shell: bash
         run: |
           set -eo pipefail
           principalId=$(az webapp identity show -g ${{ inputs.RG }} -n ${{ inputs.SCHED_FUNC }} --query principalId -o tsv)
@@ -87,9 +90,12 @@ jobs:
             --principal-id $principalId --role-definition-id $roleId --scope "/" || true
 
       - name: Expose scheduler URL to Web-App
+        shell: bash
         run: |
           az webapp config appsettings set \
-            -g ${{ inputs.RG }} -n ${{ env.APP }} --settings \
+            -g ${{ inputs.RG }} \
+            -n ${{ inputs.APP }} \        # ← now uses inputs.APP
+            --settings \
             SCHEDULER_BASE_URL="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net" \
             SCHEDULER_FUNCTION_NAME="${{ inputs.SCHED_FUNC }}" \
             SCHEDULER_MGMT_KEY=""
