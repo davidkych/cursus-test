@@ -2,6 +2,8 @@
 name: Deploy Scheduler
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       RG:
@@ -41,7 +43,7 @@ env:
   RG:        ${{ inputs.RG || env.RG }}
   APP:       ${{ inputs.APP || env.APP }}
   COSMOS:    ${{ inputs.COSMOS || env.COSMOS }}
-  SCHED_FUNC:${{ inputs.SCHED_FUNC || env.SCHED_FUNC }}
+  SCHED_FUNC: ${{ inputs.SCHED_FUNC || env.SCHED_FUNC }}
 
 jobs:
   deploy_scheduler:
@@ -63,42 +65,63 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Vendor scheduler deps & package ZIP
+        shell: bash
         run: |
           set -eo pipefail
           pushd src/scheduler_fapp
+
+          echo "📦 Installing Python deps into .python_packages/ …"
           python -m pip install --upgrade pip
           python -m pip install --no-cache-dir -r requirements.txt \
                                    --target .python_packages/lib/site-packages
+
+          echo "🗜  Creating deployment ZIP …"
           zip -qr ../../sched.zip . .python_packages
           popd
           echo "📦 scheduler zip size: $(du -h sched.zip | cut -f1)"
 
       - name: ZIP-deploy scheduler Function-App
+        shell: bash
         run: |
           set -eo pipefail
           for attempt in 1 2 3; do
             echo "🚀 ZIP deploy attempt $attempt"
             if az functionapp deployment source config-zip \
                   -g $RG -n $SCHED_FUNC --src sched.zip --timeout 240; then
-                echo "✅ succeeded"
+                echo "✅ scheduler zip deploy succeeded"
                 break
             fi
-            echo "⚠ backing off $((attempt*30))s"
+            echo "⚠️ backing off $((attempt*30))s"
             sleep $((attempt*30))
           done
+
           status=$(az functionapp show -g $RG -n $SCHED_FUNC --query state -o tsv)
-          [[ "$status" == "Running" ]] || { echo "💥 failed to start"; exit 1; }
+          [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
+
+          echo "🚀 scheduler running – tailing log 60 s …"
+          timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
 
       - name: Verify scheduler health endpoint
+        shell: bash
         run: |
           set -eo pipefail
           url="https://$SCHED_FUNC.azurewebsites.net/api/healthz"
-          for i in {1..10}; do
+          echo "🔍 Probing $url …"
+
+          for attempt in {1..10}; do
             code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
-            [[ "$code" == "200" ]] && { cat /tmp/healthz.json || true; exit 0; }
+            printf "Attempt %d → HTTP %s\n" "$attempt" "$code"
+            if [[ "$code" == "200" ]]; then
+              echo "✅ Health check passed"
+              cat /tmp/healthz.json || true
+              exit 0
+            fi
+            echo "⌛ Not ready yet – waiting 15 s"
             sleep 15
           done
-          echo "💥 health check failed"; exit 1
+
+          echo "💥 Scheduler health check failed after 10 attempts"
+          exit 1
 
       - name: Grant Cosmos role (scheduler MSI)
         run: |
@@ -121,3 +144,11 @@ jobs:
             SCHEDULER_BASE_URL=$sched_base \
             SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
             SCHEDULER_MGMT_KEY=""
+          echo "🔗 web-app now knows scheduler base $sched_base (no key needed)"
+
+      - name: Upload scheduler logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-log
+          path: sched.log

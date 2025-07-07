@@ -31,7 +31,7 @@ jobs:
     needs: infra_web
     uses: ./.github/workflows/deploy-scheduler.yml
     with:
-      RG:        ${{ env.RG }}
-      APP:       ${{ env.APP }}
-      COSMOS:    ${{ needs.infra_web.outputs.cosmos }}
-      SCHED_FUNC:${{ needs.infra_web.outputs.sched_func }}
+      RG:         ${{ env.RG }}
+      APP:        ${{ env.APP }}
+      COSMOS:     ${{ needs.infra_web.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.infra_web.outputs.sched_func }}

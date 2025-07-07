@@ -2,6 +2,8 @@
 name: Deploy Infra & Web App
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       RG:
@@ -95,6 +97,7 @@ jobs:
         run: |
           set -eo pipefail
           DEPLOY_NAME=gh-${{ github.run_id }}
+
           az deployment group create \
             --name $DEPLOY_NAME \
             --resource-group $RG \
@@ -150,24 +153,30 @@ jobs:
           set -eo pipefail
           cd src && zip -qr ../app.zip . && cd ..
           echo "⏳ initial warm-up 60 s …"; sleep 60
+
           success=false
           for attempt in 1 2; do
             echo "🚀 ZIP-deploy attempt $attempt"
             az webapp deploy -g $RG -n $APP --src-path app.zip --type zip --timeout 200 || true
+
             echo "📡 streaming container log 90 s …"
             timeout 90s az webapp log tail -g $RG -n $APP | tee live.log || true
             sleep 10
+
             code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
             if [[ "$code" == "200" ]]; then
               echo "✅ healthy"
               success=true
               break
             fi
+
             echo "⚠ unhealthy (HTTP $code) – backing off"
             sleep $((attempt*45))
           done
+
           if ! $success; then
-            echo "💥 web-app deploy failed"; exit 1
+            echo "💥 web-app deploy failed after 2 attempts"
+            exit 1
           fi
 
       - name: Restart web-app (force recycle)
@@ -176,13 +185,16 @@ jobs:
           set -eo pipefail
           echo "♻️  Restarting $APP …"
           az webapp restart -g $RG -n $APP
+
           echo "🔄 waiting for new container …"
           for i in {1..12}; do
             code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
             [[ "$code" == "200" ]] && { echo "✅ new container ready"; exit 0; }
             sleep 5
           done
-          echo "💥 container did not become healthy in time"; exit 1
+
+          echo "💥 container did not become healthy in time"
+          exit 1
 
       - name: Upload webapp logs on failure
         if: failure()
