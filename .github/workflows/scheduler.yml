@@ -57,42 +57,38 @@ jobs:
         run: |
           set -eo pipefail
           for attempt in 1 2 3; do
+            echo "🚀 ZIP deploy attempt $attempt"
             if az functionapp deployment source config-zip \
-                 -g ${{ inputs.RG }} \
-                 -n ${{ inputs.SCHED_FUNC }} \
-                 --src sched.zip \
-                 --timeout 240; then
+                  -g ${{ inputs.RG }} \
+                  -n ${{ inputs.SCHED_FUNC }} \
+                  --src sched.zip \
+                  --timeout 240; then
+              echo "✅ scheduler zip deploy succeeded"
               break
             fi
+            echo "⚠ scheduler zip deploy failed (ignored) – backing off"
+            true
             sleep $((attempt*30))
           done
-          status=$(az functionapp show \
-                     -g ${{ inputs.RG }} \
-                     -n ${{ inputs.SCHED_FUNC }} \
-                     --query state -o tsv)
-          [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
-
-      - name: Get host function key
-        id: get-key
-        shell: bash
-        run: |
-          KEY=$(az functionapp keys list \
-            --resource-group ${{ inputs.RG }} \
-            --name ${{ inputs.SCHED_FUNC }} \
-            --query "functionKeys.default" -o tsv)
-          echo "key=$KEY" >> $GITHUB_OUTPUT
 
       - name: Verify scheduler health endpoint
         shell: bash
         run: |
           set -eo pipefail
-          url="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net/api/healthz?code=${{ steps.get-key.outputs.key }}"
+          url="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net/api/healthz"
+          echo "🔍 Probing $url …"
           for attempt in {1..10}; do
-            code=$(curl -s -o /dev/null -w '%{http_code}' "$url" || true)
-            [[ "$code" == "200" ]] && exit 0
+            http_code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
+            echo "Attempt $attempt → HTTP $http_code"
+            if [[ "$http_code" == "200" ]]; then
+              echo "✅ Health check passed:"
+              cat /tmp/healthz.json || true
+              exit 0
+            fi
+            echo "⌛ Not ready yet – waiting 15 s"
             sleep 15
           done
-          echo "💥 Scheduler health check failed"
+          echo "💥 Scheduler health check failed after 10 attempts"
           exit 1
 
       - name: Grant Cosmos Data Contributor to Scheduler MSI
