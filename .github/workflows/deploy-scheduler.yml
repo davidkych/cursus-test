@@ -2,49 +2,57 @@
 name: Deploy Scheduler
 
 on:
-  workflow_run:
-    workflows: ["Deploy Infra & Web App"]
-    types:
-      - completed
+  workflow_dispatch:
+    inputs:
+      RG:
+        description: 'Resource group'
+        required: true
+        default: 'cursus-test-rg'
+      APP:
+        description: 'App name'
+        required: true
+        default: 'cursus-test-app'
+      COSMOS:
+        description: 'Cosmos account name'
+        required: true
+      SCHED_FUNC:
+        description: 'Scheduler function name'
+        required: true
+  workflow_call:
+    inputs:
+      RG:
+        required: true
+        type: string
+      APP:
+        required: true
+        type: string
+      COSMOS:
+        required: true
+        type: string
+      SCHED_FUNC:
+        required: true
+        type: string
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  RG:   cursus-test-rg
-  APP:  cursus-test-app
+  RG:        ${{ inputs.RG || env.RG }}
+  APP:       ${{ inputs.APP || env.APP }}
+  COSMOS:    ${{ inputs.COSMOS || env.COSMOS }}
+  SCHED_FUNC:${{ inputs.SCHED_FUNC || env.SCHED_FUNC }}
 
 jobs:
   deploy_scheduler:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Download deploy outputs
-        uses: actions/download-artifact@v4
+      - uses: actions/setup-python@v4
         with:
-          name: deploy-outputs
-          path: .
-
-      - name: Install jq
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Parse outputs
-        run: |
-          COSMOS=$(jq -r .cosmos outputs.json)
-          SCHED_FUNC=$(jq -r .sched_func outputs.json)
-          echo "COSMOS=$COSMOS"     >> $GITHUB_ENV
-          echo "SCHED_FUNC=$SCHED_FUNC" >> $GITHUB_ENV
-
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: "3.9"
+          python-version: '3.9'
           cache: pip
 
       - name: Azure Login
@@ -55,63 +63,42 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Vendor scheduler deps & package ZIP
-        shell: bash
         run: |
           set -eo pipefail
           pushd src/scheduler_fapp
-
-          echo "📦 Installing Python deps into .python_packages/ …"
           python -m pip install --upgrade pip
           python -m pip install --no-cache-dir -r requirements.txt \
                                    --target .python_packages/lib/site-packages
-
-          echo "🗜  Creating deployment ZIP …"
           zip -qr ../../sched.zip . .python_packages
           popd
           echo "📦 scheduler zip size: $(du -h sched.zip | cut -f1)"
 
       - name: ZIP-deploy scheduler Function-App
-        shell: bash
         run: |
           set -eo pipefail
           for attempt in 1 2 3; do
             echo "🚀 ZIP deploy attempt $attempt"
             if az functionapp deployment source config-zip \
                   -g $RG -n $SCHED_FUNC --src sched.zip --timeout 240; then
-                echo "✅ scheduler zip deploy succeeded"
+                echo "✅ succeeded"
                 break
             fi
-            echo "⚠️ attempt $attempt failed – backing off $((attempt*30)) s"
+            echo "⚠ backing off $((attempt*30))s"
             sleep $((attempt*30))
           done
-
           status=$(az functionapp show -g $RG -n $SCHED_FUNC --query state -o tsv)
-          [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
-
-          echo "🚀 scheduler running – tailing log 60 s …"
-          timeout 60s az webapp log tail -g $RG -n $SCHED_FUNC | tee sched.log || true
+          [[ "$status" == "Running" ]] || { echo "💥 failed to start"; exit 1; }
 
       - name: Verify scheduler health endpoint
-        shell: bash
         run: |
           set -eo pipefail
           url="https://$SCHED_FUNC.azurewebsites.net/api/healthz"
-          echo "🔍 Probing $url …"
-
-          for attempt in {1..10}; do
+          for i in {1..10}; do
             code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
-            printf "Attempt %d → HTTP %s\n" "$attempt" "$code"
-            if [ "$code" = "200" ]; then
-              echo "✅ Health check passed"
-              cat /tmp/healthz.json || true
-              exit 0
-            fi
-            echo "⌛ Not ready yet – waiting 15 s"
+            [[ "$code" == "200" ]] && { cat /tmp/healthz.json || true; exit 0; }
             sleep 15
           done
-
-          echo "💥 Scheduler health check failed after 10 attempts"
-          exit 1
+          echo "💥 health check failed"; exit 1
 
       - name: Grant Cosmos role (scheduler MSI)
         run: |
@@ -129,18 +116,8 @@ jobs:
         run: |
           set -eo pipefail
           sched_base="https://$SCHED_FUNC.azurewebsites.net"
-
           az webapp config appsettings set \
             -g $RG -n $APP --settings \
             SCHEDULER_BASE_URL=$sched_base \
             SCHEDULER_FUNCTION_NAME=$SCHED_FUNC \
             SCHEDULER_MGMT_KEY=""
-
-          echo "🔗 web-app now knows scheduler base $sched_base (no key needed)"
-
-      - name: Upload scheduler logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scheduler-log
-          path: sched.log
