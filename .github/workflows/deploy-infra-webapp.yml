@@ -2,8 +2,6 @@
 name: Deploy Infra & Web App
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       RG:
@@ -30,37 +28,30 @@ on:
     inputs:
       RG:
         required: true
-        type: string
       LOCATION:
         required: true
-        type: string
       APP:
         required: true
-        type: string
       PLAN_SKU:
         required: true
-        type: string
       TIMEOUT:
         required: true
-        type: number
     outputs:
       cosmos:
         description: 'Cosmos account name'
-        type: string
       sched_func:
         description: 'Scheduler function name'
-        type: string
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  RG:       ${{ inputs.RG || env.RG }}
-  LOCATION: ${{ inputs.LOCATION || env.LOCATION }}
-  APP:      ${{ inputs.APP || env.APP }}
-  PLAN_SKU: ${{ inputs.PLAN_SKU || env.PLAN_SKU }}
-  TIMEOUT:  ${{ inputs.TIMEOUT || env.TIMEOUT }}
+  RG:       ${{ inputs.RG }}
+  LOCATION: ${{ inputs.LOCATION }}
+  APP:      ${{ inputs.APP }}
+  PLAN_SKU: ${{ inputs.PLAN_SKU }}
+  TIMEOUT:  ${{ inputs.TIMEOUT }}
 
 jobs:
   deploy:
@@ -70,9 +61,11 @@ jobs:
       sched_func: ${{ steps.infra.outputs.sched_func }}
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: pip

@@ -2,17 +2,15 @@
 name: Deploy Scheduler
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       RG:
         description: 'Resource group'
-        required: true
+        required: false
         default: 'cursus-test-rg'
       APP:
         description: 'App name'
-        required: true
+        required: false
         default: 'cursus-test-app'
       COSMOS:
         description: 'Cosmos account name'
@@ -23,36 +21,36 @@ on:
   workflow_call:
     inputs:
       RG:
-        required: true
-        type: string
+        required: false
+        default: 'cursus-test-rg'
       APP:
-        required: true
-        type: string
+        required: false
+        default: 'cursus-test-app'
       COSMOS:
         required: true
-        type: string
       SCHED_FUNC:
         required: true
-        type: string
 
 permissions:
   id-token: write
   contents: read
 
 env:
-  RG:        ${{ inputs.RG || env.RG }}
-  APP:       ${{ inputs.APP || env.APP }}
-  COSMOS:    ${{ inputs.COSMOS || env.COSMOS }}
-  SCHED_FUNC: ${{ inputs.SCHED_FUNC || env.SCHED_FUNC }}
+  RG:         ${{ inputs.RG }}
+  APP:        ${{ inputs.APP }}
+  COSMOS:     ${{ inputs.COSMOS }}
+  SCHED_FUNC: ${{ inputs.SCHED_FUNC }}
 
 jobs:
   deploy_scheduler:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-      - uses: actions/setup-python@v4
+      - name: Setup Python
+        uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: pip
