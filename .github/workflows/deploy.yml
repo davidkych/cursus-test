@@ -25,6 +25,10 @@ jobs:
       LOCATION: eastasia
       PLAN_SKU: B1
       TIMEOUT:  1800
+    secrets:
+      AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   web_app:
     needs: infra
@@ -35,6 +39,10 @@ jobs:
       TIMEOUT:    1800
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
+    secrets:
+      AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   scheduler:
     needs: infra
@@ -43,3 +51,7 @@ jobs:
       RG:         cursus-test-rg
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
+    secrets:
+      AZURE_CLIENT_ID:       ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID:       ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
