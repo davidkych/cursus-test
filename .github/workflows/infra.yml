@@ -1,0 +1,54 @@
+# .github/workflows/infra.yml
+name: Infra Reusable
+
+on:
+  workflow_call:
+    inputs:
+      RG:
+        required: true
+        type: string
+      LOCATION:
+        required: true
+        type: string
+      PLAN_SKU:
+        required: true
+        type: string
+      TIMEOUT:
+        required: true
+        type: number
+    outputs:
+      cosmos:
+        type: string
+      sched_func:
+        type: string
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: azure/login@v1
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep infra
+        id: infra
+        run: |
+          set -eo pipefail
+          DEPLOY_NAME=gh-${{ github.run_id }}
+          az deployment group create \
+            --name $DEPLOY_NAME \
+            --resource-group ${{ inputs.RG }} \
+            --template-file infra/main.bicep \
+            --parameters planSkuName=${{ inputs.PLAN_SKU }} timeout=${{ inputs.TIMEOUT }}
+          COSMOS=$(az deployment group show \
+                     -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+                     --query "properties.outputs.cosmosAccountName.value" -o tsv)
+          SCHED=$(az deployment group show \
+                    -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+                    --query "properties.outputs.schedulerFunctionName.value" -o tsv)
+          echo "cosmos=$COSMOS"         >> $GITHUB_OUTPUT
+          echo "sched_func=$SCHED"      >> $GITHUB_OUTPUT
