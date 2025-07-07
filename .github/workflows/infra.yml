@@ -16,6 +16,13 @@ on:
       TIMEOUT:
         required: true
         type: number
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
@@ -27,8 +34,6 @@ on:
 jobs:
   provision:
     runs-on: ubuntu-latest
-
-    # ← map the step outputs into job outputs
     outputs:
       cosmos:     ${{ steps.infra.outputs.cosmos }}
       sched_func: ${{ steps.infra.outputs.sched_func }}
