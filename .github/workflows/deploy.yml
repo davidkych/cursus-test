@@ -21,18 +21,18 @@ jobs:
   infra:
     uses: ./.github/workflows/infra.yml
     with:
-      RG:       ${{ env.RG }}
-      LOCATION: ${{ env.LOCATION }}
-      PLAN_SKU: ${{ env.PLAN_SKU }}
-      TIMEOUT:  ${{ env.TIMEOUT }}
+      RG:       cursus-test-rg
+      LOCATION: eastasia
+      PLAN_SKU: B1
+      TIMEOUT:  1800
 
   web_app:
     needs: infra
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:         ${{ env.RG }}
-      APP:        ${{ env.APP }}
-      TIMEOUT:    ${{ env.TIMEOUT }}
+      RG:         cursus-test-rg
+      APP:        cursus-test-app
+      TIMEOUT:    1800
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
 
@@ -40,6 +40,6 @@ jobs:
     needs: infra
     uses: ./.github/workflows/scheduler.yml
     with:
-      RG:         ${{ env.RG }}
+      RG:         cursus-test-rg
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
