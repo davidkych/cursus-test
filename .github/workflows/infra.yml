@@ -19,8 +19,10 @@ on:
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
+        value: ${{ steps.infra.outputs.cosmos }}
       sched_func:
         description: 'Scheduler Function-App name'
+        value: ${{ steps.infra.outputs.sched_func }}
 
 jobs:
   provision:
