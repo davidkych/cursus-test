@@ -10,13 +10,28 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  RG:       cursus-test-rg
+  LOCATION: eastasia
+  APP:      cursus-test-app
+  PLAN_SKU: B1
+  TIMEOUT:  1800
+
 jobs:
   infra_web:
     uses: ./.github/workflows/deploy-infra-webapp.yml
+    with:
+      RG:       ${{ env.RG }}
+      LOCATION: ${{ env.LOCATION }}
+      APP:      ${{ env.APP }}
+      PLAN_SKU: ${{ env.PLAN_SKU }}
+      TIMEOUT:  ${{ env.TIMEOUT }}
 
   scheduler:
     needs: infra_web
     uses: ./.github/workflows/deploy-scheduler.yml
     with:
+      RG:         ${{ env.RG }}
+      APP:        ${{ env.APP }}
       COSMOS:     ${{ needs.infra_web.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra_web.outputs.sched_func }}

@@ -7,29 +7,37 @@ on:
       RG:
         description: 'Resource group'
         required: false
+        type: string
         default: 'cursus-test-rg'
       APP:
         description: 'App name'
         required: false
+        type: string
         default: 'cursus-test-app'
       COSMOS:
         description: 'Cosmos account name'
         required: true
+        type: string
       SCHED_FUNC:
         description: 'Scheduler function name'
         required: true
+        type: string
   workflow_call:
     inputs:
       RG:
         required: false
+        type: string
         default: 'cursus-test-rg'
       APP:
         required: false
+        type: string
         default: 'cursus-test-app'
       COSMOS:
         required: true
+        type: string
       SCHED_FUNC:
         required: true
+        type: string
 
 permissions:
   id-token: write

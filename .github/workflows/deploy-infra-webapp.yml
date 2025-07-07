@@ -7,40 +7,52 @@ on:
       RG:
         description: 'Resource group'
         required: true
+        type: string
         default: 'cursus-test-rg'
       LOCATION:
         description: 'Azure region'
         required: true
+        type: string
         default: 'eastasia'
       APP:
         description: 'App name'
         required: true
+        type: string
         default: 'cursus-test-app'
       PLAN_SKU:
         description: 'App-Service plan SKU'
         required: true
+        type: string
         default: 'B1'
       TIMEOUT:
         description: 'Container start-up timeout (sec)'
         required: true
-        default: '1800'
+        type: number
+        default: 1800
   workflow_call:
     inputs:
       RG:
         required: true
+        type: string
       LOCATION:
         required: true
+        type: string
       APP:
         required: true
+        type: string
       PLAN_SKU:
         required: true
+        type: string
       TIMEOUT:
         required: true
+        type: number
     outputs:
       cosmos:
         description: 'Cosmos account name'
+        type: string
       sched_func:
         description: 'Scheduler function name'
+        type: string
 
 permissions:
   id-token: write
