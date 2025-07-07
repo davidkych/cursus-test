@@ -24,6 +24,15 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
+  # ← Allow manual runs from Actions UI
+  workflow_dispatch:  
+
+  # ← Auto-run only when scheduler code changes
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/scheduler_fapp/**'
+
 jobs:
   deploy-scheduler:
     runs-on: ubuntu-latest
@@ -67,7 +76,6 @@ jobs:
               break
             fi
             echo "⚠ scheduler zip deploy failed (ignored) – backing off"
-            true
             sleep $((attempt*30))
           done
 

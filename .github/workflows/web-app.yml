@@ -27,9 +27,20 @@ on:
       AZURE_SUBSCRIPTION_ID:
         required: true
 
+  # ← Allow manual runs from Actions UI
+  workflow_dispatch:
+
+  # ← Auto-run only when web-app code (but not scheduler) changes
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - '!src/scheduler_fapp/**'
+
 jobs:
   deploy-web-app:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v3
 
@@ -87,8 +98,7 @@ jobs:
           for attempt in 1 2; do
             echo "🚀 ZIP-deploy attempt $attempt"
             az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} --src-path app.zip --type zip --timeout 200 || true
-
-            echo "📡 streaming container log 90 s …"
+            echo "📡 streaming container log …"
             timeout 90s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
             sleep 10
 
@@ -98,13 +108,12 @@ jobs:
               success=true
               break
             fi
-
             echo "⚠ unhealthy (HTTP $code) – backing off"
             sleep $((attempt*45))
           done
 
           if ! $success; then
-            echo "💥 web-app deploy failed after 2 attempts"
+            echo "💥 web-app deploy failed"
             exit 1
           fi
 
@@ -118,7 +127,7 @@ jobs:
             [[ "$code" == "200" ]] && exit 0
             sleep 5
           done
-          echo "💥 container did not become healthy in time"
+          echo "💥 restart health check failed"
           exit 1
 
       - if: failure()
