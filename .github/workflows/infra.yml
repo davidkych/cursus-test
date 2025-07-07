@@ -19,14 +19,20 @@ on:
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
-        value: ${{ steps.infra.outputs.cosmos }}
+        value: ${{ jobs.provision.outputs.cosmos }}
       sched_func:
         description: 'Scheduler Function-App name'
-        value: ${{ steps.infra.outputs.sched_func }}
+        value: ${{ jobs.provision.outputs.sched_func }}
 
 jobs:
   provision:
     runs-on: ubuntu-latest
+
+    # ← map the step outputs into job outputs
+    outputs:
+      cosmos:     ${{ steps.infra.outputs.cosmos }}
+      sched_func: ${{ steps.infra.outputs.sched_func }}
+
     steps:
       - uses: actions/checkout@v3
 
