@@ -1,0 +1,167 @@
+# .github/workflows/deploy-infra-webapp.yml
+name: Deploy Infra & Web App
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  RG:          cursus-test-rg
+  LOCATION:    eastasia
+  APP:         cursus-test-app
+  PLAN_SKU:    B1
+  TIMEOUT:     1800
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+          cache: pip
+
+      - name: Vendor deps
+        run: |
+          pip install --upgrade pip
+          pip install --only-binary=:all: --prefer-binary \
+            --no-cache-dir \
+            -r src/requirements.txt \
+            --target src/.python_packages
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision infra (Bicep)
+        id: infra
+        run: |
+          set -eo pipefail
+          DEPLOY_NAME=gh-${{ github.run_id }}
+
+          az deployment group create \
+            --name $DEPLOY_NAME \
+            --resource-group $RG \
+            --template-file infra/main.bicep \
+            --parameters planSkuName=$PLAN_SKU timeout=$TIMEOUT
+
+          COSMOS=$(az deployment group show \
+                     -g $RG -n $DEPLOY_NAME \
+                     --query "properties.outputs.cosmosAccountName.value" -o tsv)
+          SCHED_FUNC=$(az deployment group show \
+                         -g $RG -n $DEPLOY_NAME \
+                         --query "properties.outputs.schedulerFunctionName.value" -o tsv)
+
+          # expose to later steps in this job
+          echo "COSMOS=$COSMOS"         >> $GITHUB_ENV
+          echo "SCHED_FUNC=$SCHED_FUNC" >> $GITHUB_ENV
+
+          # persist for downstream workflow
+          printf '{"cosmos":"%s","sched_func":"%s"}' "$COSMOS" "$SCHED_FUNC" > outputs.json
+
+          echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED_FUNC"
+
+      - name: Upload deploy outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-outputs
+          path: outputs.json
+
+      - name: Grant Cosmos “Built-in Data Contributor” role (web-app)
+        run: |
+          set -eo pipefail
+          principalId=$(az webapp identity show -g $RG -n $APP --query principalId -o tsv)
+          roleId=$(az cosmosdb sql role definition list -g $RG --account-name $COSMOS \
+                   --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+          az cosmosdb sql role assignment create -g $RG -n $COSMOS \
+            --principal-id $principalId \
+            --role-definition-id $roleId \
+            --scope "/" || true
+          echo "✅ web-app MSI granted data-plane role"
+
+      - name: Configure Web-App settings
+        run: |
+          az webapp config appsettings set -g $RG -n $APP --settings \
+            WEBSITE_RUN_FROM_PACKAGE=0 \
+            SCM_DO_BUILD_DURING_DEPLOYMENT=false \
+            WEBSITES_PORT=8000 \
+            PYTHONPATH="/home/site/wwwroot:/home/site/wwwroot/.python_packages" \
+            WEBSITES_CONTAINER_START_TIME_LIMIT=$TIMEOUT \
+            WEBSITES_STARTUP_COMMAND="gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app" \
+            WEBSITES_LOG_MESSAGE_LEVEL=Verbose \
+            SCM_LOGSTREAM_TIMEOUT=240
+          az webapp config set -g $RG -n $APP --always-on true
+          az webapp log config -g $RG -n $APP \
+            --application-logging filesystem \
+            --detailed-error-messages true \
+            --failed-request-tracing true
+          echo "⚙️  base app-settings applied"
+
+      - name: ZIP-deploy FastAPI web-app
+        shell: bash
+        run: |
+          set -eo pipefail
+          cd src && zip -qr ../app.zip . && cd ..
+          echo "⏳ initial warm-up 60 s …"; sleep 60
+
+          success=false
+          for attempt in 1 2; do
+            echo "🚀 ZIP-deploy attempt $attempt"
+            az webapp deploy -g $RG -n $APP --src-path app.zip --type zip --timeout 200 || true
+
+            echo "📡 streaming container log 90 s …"
+            timeout 90s az webapp log tail -g $RG -n $APP | tee live.log || true
+            sleep 10
+
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
+            if [[ "$code" == "200" ]]; then
+              echo "✅ healthy"
+              success=true
+              break
+            fi
+
+            echo "⚠ unhealthy (HTTP $code) – backing off"
+            sleep $((attempt*45))
+          done
+
+          if ! $success; then
+            echo "💥 web-app deploy failed after 2 attempts"
+            exit 1
+          fi
+
+      - name: Restart web-app (force recycle)
+        shell: bash
+        run: |
+          set -eo pipefail
+          echo "♻️  Restarting $APP …"
+          az webapp restart -g $RG -n $APP
+
+          echo "🔄 waiting for new container …"
+          for i in {1..12}; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$APP.azurewebsites.net/healthz" || true)
+            [[ "$code" == "200" ]] && { echo "✅ new container ready"; exit 0; }
+            sleep 5
+          done
+
+          echo "💥 container did not become healthy in time"
+          exit 1
+
+      - name: Upload webapp logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webapp-log
+          path: live.log
