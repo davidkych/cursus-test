@@ -7,27 +7,22 @@ on:
       RG:
         description: 'Resource group'
         required: true
-        type: string
         default: 'cursus-test-rg'
       LOCATION:
         description: 'Azure region'
         required: true
-        type: string
         default: 'eastasia'
       APP:
         description: 'App name'
         required: true
-        type: string
         default: 'cursus-test-app'
       PLAN_SKU:
         description: 'App-Service plan SKU'
         required: true
-        type: string
         default: 'B1'
       TIMEOUT:
         description: 'Container start-up timeout (sec)'
         required: true
-        type: number
         default: 1800
   workflow_call:
     inputs:
@@ -73,11 +68,9 @@ jobs:
       sched_func: ${{ steps.infra.outputs.sched_func }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: pip
