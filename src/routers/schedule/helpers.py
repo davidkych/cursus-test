@@ -1,6 +1,7 @@
 # src/routers/schedule/helpers.py
 import os
 import logging
+from typing import Optional
 from fastapi import HTTPException
 
 # constants for cold-start retries/delays
@@ -8,7 +9,7 @@ COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "4"))
 COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY", "5"))
 
 _logger = logging.getLogger(__name__)
-_base_cache: str | None = None
+_base_cache: Optional[str] = None
 
 def scheduler_base() -> str:
     global _base_cache
