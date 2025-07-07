@@ -72,15 +72,14 @@ jobs:
                      --query state -o tsv)
           [[ "$status" == "Running" ]] || { echo "💥 scheduler failed to start"; exit 1; }
 
-      - name: Get healthz function key
+      - name: Get host function key
         id: get-key
         shell: bash
         run: |
-          KEY=$(az functionapp function keys list \
+          KEY=$(az functionapp keys list \
             --resource-group ${{ inputs.RG }} \
             --name ${{ inputs.SCHED_FUNC }} \
-            --function-name healthz \
-            --query default -o tsv)
+            --query "functionKeys.default" -o tsv)
           echo "key=$KEY" >> $GITHUB_OUTPUT
 
       - name: Verify scheduler health endpoint
