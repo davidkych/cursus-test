@@ -21,17 +21,17 @@ jobs:
   infra_web:
     uses: ./.github/workflows/deploy-infra-webapp.yml
     with:
-      RG:       ${{ env.RG }}
-      LOCATION: ${{ env.LOCATION }}
-      APP:      ${{ env.APP }}
-      PLAN_SKU: ${{ env.PLAN_SKU }}
-      TIMEOUT:  ${{ env.TIMEOUT }}
+      RG:       cursus-test-rg
+      LOCATION: eastasia
+      APP:      cursus-test-app
+      PLAN_SKU: B1
+      TIMEOUT:  1800
 
   scheduler:
     needs: infra_web
     uses: ./.github/workflows/deploy-scheduler.yml
     with:
-      RG:         ${{ env.RG }}
-      APP:        ${{ env.APP }}
+      RG:         cursus-test-rg
+      APP:        cursus-test-app
       COSMOS:     ${{ needs.infra_web.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra_web.outputs.sched_func }}
