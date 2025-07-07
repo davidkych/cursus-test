@@ -18,9 +18,9 @@ on:
         type: number
     outputs:
       cosmos:
-        type: string
+        description: 'Cosmos DB account name'
       sched_func:
-        type: string
+        description: 'Scheduler Function-App name'
 
 jobs:
   provision:
@@ -44,11 +44,11 @@ jobs:
             --resource-group ${{ inputs.RG }} \
             --template-file infra/main.bicep \
             --parameters planSkuName=${{ inputs.PLAN_SKU }} timeout=${{ inputs.TIMEOUT }}
-          COSMOS=$(az deployment group show \
-                     -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+
+          COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)
-          SCHED=$(az deployment group show \
-                    -g ${{ inputs.RG }} -n $DEPLOY_NAME \
-                    --query "properties.outputs.schedulerFunctionName.value" -o tsv)
-          echo "cosmos=$COSMOS"         >> $GITHUB_OUTPUT
-          echo "sched_func=$SCHED"      >> $GITHUB_OUTPUT
+          SCHED=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+                     --query "properties.outputs.schedulerFunctionName.value" -o tsv)
+
+          echo "cosmos=$COSMOS"    >> $GITHUB_OUTPUT
+          echo "sched_func=$SCHED" >> $GITHUB_OUTPUT
