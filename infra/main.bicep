@@ -12,7 +12,7 @@ param timeout int = 1800
 
 var appName        = 'cursus-test-app'
 var schedFuncName  = 'cursus-test-sched'
-var staticSiteName = 'cursus-web'        // ← Static Web App name
+var staticSiteName = 'cursus-test-web'        // ← Static Web App name
 
 // 1) App-Service Plan -------------------------------------------------
 module planModule './modules/plan.bicep' = {
