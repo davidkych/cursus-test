@@ -1,0 +1,66 @@
+# .github/workflows/infra.yml
+name: Infra Reusable
+
+on:
+  workflow_call:
+    inputs:
+      RG:
+        required: true
+        type: string
+      LOCATION:
+        required: true
+        type: string
+      PLAN_SKU:
+        required: true
+        type: string
+      TIMEOUT:
+        required: true
+        type: number
+    secrets:
+      AZURE_CREDENTIALS:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+    outputs:
+      cosmos:
+        description: 'Cosmos DB account name'
+        value: ${{ jobs.provision.outputs.cosmos }}
+      sched_func:
+        description: 'Scheduler Function-App name'
+        value: ${{ jobs.provision.outputs.sched_func }}
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      cosmos:     ${{ steps.infra.outputs.cosmos }}
+      sched_func: ${{ steps.infra.outputs.sched_func }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: azure/login@v1
+        with:
+          auth-type: SERVICE_PRINCIPAL
+          creds:     ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy Bicep infra
+        id: infra
+        run: |
+          set -eo pipefail
+          DEPLOY_NAME=gh-${{ github.run_id }}
+          az deployment group create \
+            --name $DEPLOY_NAME \
+            --resource-group ${{ inputs.RG }} \
+            --template-file infra/main.bicep \
+            --parameters planSkuName=${{ inputs.PLAN_SKU }} timeout=${{ inputs.TIMEOUT }}
+
+          COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+                     --query "properties.outputs.cosmosAccountName.value" -o tsv)
+          SCHED=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+                     --query "properties.outputs.schedulerFunctionName.value" -o tsv)
+
+          echo "cosmos=$COSMOS"    >> $GITHUB_OUTPUT
+          echo "sched_func=$SCHED" >> $GITHUB_OUTPUT
+
+          echo "🏗  infra ready – cosmos=$COSMOS, scheduler=$SCHED"

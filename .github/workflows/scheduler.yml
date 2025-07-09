@@ -1,0 +1,128 @@
+# .github/workflows/scheduler.yml
+name: Scheduler Reusable
+
+on:
+  workflow_call:
+    inputs:
+      RG:
+        required: true
+        type: string
+      APP:
+        required: true
+        type: string
+      SCHED_FUNC:
+        required: true
+        type: string
+      COSMOS:
+        required: true
+        type: string
+    secrets:
+      AZURE_CREDENTIALS:
+        required: true
+
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/scheduler_fapp/**'
+
+jobs:
+  deploy-scheduler:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+          cache: pip
+
+      - uses: azure/login@v1
+        with:
+          auth-type: SERVICE_PRINCIPAL
+          creds:     ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Vendor scheduler deps and ZIP
+        shell: bash
+        run: |
+          set -eo pipefail
+          pushd src/scheduler_fapp
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir -r requirements.txt --target .python_packages/lib/site-packages
+          zip -qr ../../sched.zip . .python_packages
+          popd
+
+      - name: ZIP-deploy scheduler Function-App
+        shell: bash
+        run: |
+          set -eo pipefail
+          for attempt in 1 2 3; do
+            echo "🚀 ZIP deploy attempt $attempt"
+            if az functionapp deployment source config-zip \
+                  -g ${{ inputs.RG }} \
+                  -n ${{ inputs.SCHED_FUNC }} \
+                  --src sched.zip \
+                  --timeout 240; then
+              echo "✅ scheduler zip deploy succeeded"
+              break
+            fi
+            echo "⚠ scheduler zip deploy failed (ignored) – backing off"
+            sleep $((attempt*30))
+          done
+
+      - name: Verify scheduler health endpoint
+        shell: bash
+        run: |
+          set -eo pipefail
+          url="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net/api/healthz"
+          echo "🔍 Probing $url …"
+          for attempt in {1..10}; do
+            http_code=$(curl -s -o /tmp/healthz.json -w '%{http_code}' "$url" || true)
+            echo "Attempt $attempt → HTTP $http_code"
+            if [[ "$http_code" == "200" ]]; then
+              echo "✅ Health check passed:"
+              cat /tmp/healthz.json || true
+              exit 0
+            fi
+            echo "⌛ Not ready yet – waiting 15 s"
+            sleep 15
+          done
+          echo "💥 Scheduler health check failed after 10 attempts"
+          exit 1
+
+      - name: Grant Cosmos Data Contributor to Scheduler MSI
+        shell: bash
+        run: |
+          set -eo pipefail
+          principalId=$(az webapp identity show \
+            --resource-group ${{ inputs.RG }} \
+            --name ${{ inputs.SCHED_FUNC }} \
+            --query principalId -o tsv)
+          roleId=$(az cosmosdb sql role definition list \
+            --resource-group ${{ inputs.RG }} \
+            --account-name ${{ inputs.COSMOS }} \
+            --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+          az cosmosdb sql role assignment create \
+            --resource-group ${{ inputs.RG }} \
+            --account-name ${{ inputs.COSMOS }} \
+            --principal-id $principalId \
+            --role-definition-id $roleId \
+            --scope "/" || true
+
+      - name: Expose scheduler URL to Web-App
+        shell: bash
+        run: |
+          az webapp config appsettings set \
+            -g ${{ inputs.RG }} \
+            -n ${{ inputs.APP }} \
+            --settings \
+            SCHEDULER_BASE_URL="https://${{ inputs.SCHED_FUNC }}.azurewebsites.net" \
+            SCHEDULER_FUNCTION_NAME="${{ inputs.SCHED_FUNC }}" \
+            SCHEDULER_MGMT_KEY=""
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scheduler-log
+          path: sched.log
