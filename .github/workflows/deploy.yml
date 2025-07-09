@@ -1,5 +1,4 @@
-﻿# .github/workflows/deploy.yml
-name: Azure Deployment (Test)
+﻿name: Azure Deployment (Test)
 
 on:
   push:
@@ -39,7 +38,7 @@ jobs:
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
 
   scheduler:
     needs: infra
@@ -50,7 +49,7 @@ jobs:
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
-      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
 
   # ────────────────────────────────────────────────────────────────────
   # NEW ▪ Front-end Static Web App upload  (runs in parallel)
@@ -59,7 +58,8 @@ jobs:
     needs: infra
     uses: ./.github/workflows/static-web.yml
     with:
-      RG: ${{ env.RG }}
+      RG:               ${{ env.RG }}
+      STATIC_SITE_NAME: cursus-web
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

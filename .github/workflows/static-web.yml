@@ -1,10 +1,12 @@
-# .github/workflows/static-web.yml
 name: Frontend Static Web App
 
 on:
   workflow_call:
     inputs:
       RG:
+        required: true
+        type: string
+      STATIC_SITE_NAME:
         required: true
         type: string
     secrets:
@@ -28,6 +30,22 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch Static Web Apps API token
+        id: fetch_token
+        run: |
+          set -eo pipefail
+          token=$(az staticwebapp secrets list \
+            --name ${{ inputs.STATIC_SITE_NAME }} \
+            --resource-group ${{ inputs.RG }} \
+            --query properties.apiKey -o tsv)
+          echo "token=$token" >> $GITHUB_OUTPUT
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -43,34 +61,11 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Azure Login
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Discover Static Web App name
-        id: lookup
-        run: |
-          swan=$(az staticwebapp list \
-            --resource-group ${{ inputs.RG }} \
-            --query '[0].name' -o tsv)
-          echo "static_app_name=$swan" >> $GITHUB_OUTPUT
-
-      - name: Fetch deployment token
-        id: tok
-        run: |
-          tok=$(az staticwebapp secrets list \
-            --name ${{ steps.lookup.outputs.static_app_name }} \
-            --resource-group ${{ inputs.RG }} \
-            --query 'properties.apiKey' -o tsv)
-          echo "deploy_token=$tok" >> $GITHUB_OUTPUT
-
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1
         with:
-          azure_static_web_apps_api_token: ${{ steps.tok.outputs.deploy_token }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          azure_static_web_apps_api_token: ${{ steps.fetch_token.outputs.token }}
+          repo_token:                        ${{ secrets.GITHUB_TOKEN }}
           action: upload
-          app_location: frontend
+          app_location:    frontend
           output_location: frontend/dist
