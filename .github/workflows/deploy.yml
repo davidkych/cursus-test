@@ -39,7 +39,7 @@ jobs:
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
-      AZURE_CREDENTIALS:   ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
   scheduler:
     needs: infra
@@ -50,11 +50,13 @@ jobs:
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
-      AZURE_CREDENTIALS:   ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
+  # ────────────────────────────────────────────────────────────────────
+  # NEW ▪ Front-end Static Web App upload  (runs in parallel)
+  # ────────────────────────────────────────────────────────────────────
   static_web:
     needs: infra
     uses: ./.github/workflows/static-web.yml
     secrets:
       AZURE_STATIC_WEB_APPS_TOKEN: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
-      GITHUB_TOKEN:               ${{ secrets.GITHUB_TOKEN }}

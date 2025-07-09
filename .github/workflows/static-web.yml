@@ -1,6 +1,13 @@
 name: Frontend Static Web App
 
 on:
+  # ── allow the file to be called from another workflow ───────────────
+  workflow_call:
+    secrets:
+      AZURE_STATIC_WEB_APPS_TOKEN:
+        required: true
+
+  # ── keep the original standalone triggers ──────────────────────────
   push:
     branches: [ main ]
     paths: [ 'frontend/**' ]
@@ -31,14 +38,11 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # ────────────────────────────────────────────────────────────────
-      # FIX: action tag changed to v1 (latest published)
-      # ────────────────────────────────────────────────────────────────
       - name: Deploy to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
+        uses: Azure/static-web-apps-deploy@v1      # ← pinned tag
         with:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_TOKEN }}
           repo_token:                      ${{ secrets.GITHUB_TOKEN }}
           action: upload
-          app_location:    frontend          # where package.json lives
-          output_location: frontend/dist     # build output
+          app_location:    frontend
+          output_location: frontend/dist
