@@ -4,40 +4,27 @@ name: Scheduler Reusable
 on:
   workflow_call:
     inputs:
-      RG:
-        required: true
-        type: string
-      APP:
-        required: true
-        type: string
-      SCHED_FUNC:
-        required: true
-        type: string
-      COSMOS:
-        required: true
-        type: string
+      RG:        { required: true, type: string }
+      APP:       { required: true, type: string }
+      SCHED_FUNC:{ required: true, type: string }
+      COSMOS:    { required: true, type: string }
     secrets:
-      AZURE_CREDENTIALS:
-        required: true
+      AZURE_CREDENTIALS: { required: true }
 
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths:
-      - 'src/scheduler_fapp/**'
+    paths: [ 'src/scheduler_fapp/**' ]
 
 jobs:
   deploy-scheduler:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
-
       - uses: actions/setup-python@v4
         with:
           python-version: "3.9"
-          cache: pip
-
+          cache:         pip
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
@@ -90,25 +77,34 @@ jobs:
           done
           echo "💥 Scheduler health check failed after 10 attempts"
           exit 1
-
+          
       - name: Grant Cosmos Data Contributor to Scheduler MSI
+        env:
+          RG:        ${{ inputs.RG }}
+          COSMOS:    ${{ inputs.COSMOS }}
+          SCHEDFUNC: ${{ inputs.SCHED_FUNC }}
         shell: bash
         run: |
           set -eo pipefail
+          [[ -z "$RG" || -z "$COSMOS" || -z "$SCHEDFUNC" ]] && {
+            echo "RG, COSMOS or SCHEDFUNC not set" >&2; exit 1; }
+
           principalId=$(az webapp identity show \
-            --resource-group ${{ inputs.RG }} \
-            --name ${{ inputs.SCHED_FUNC }} \
-            --query principalId -o tsv)
+              --resource-group "$RG" \
+              --name           "$SCHEDFUNC" \
+              --query principalId -o tsv)
+
           roleId=$(az cosmosdb sql role definition list \
-            --resource-group ${{ inputs.RG }} \
-            --account-name ${{ inputs.COSMOS }} \
-            --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+              --resource-group "$RG" \
+              --account-name   "$COSMOS" \
+              --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+
           az cosmosdb sql role assignment create \
-            --resource-group ${{ inputs.RG }} \
-            --account-name ${{ inputs.COSMOS }} \
-            --principal-id $principalId \
-            --role-definition-id $roleId \
-            --scope "/" || true
+              --resource-group "$RG" \
+              --account-name  "$COSMOS" \
+              --principal-id  "$principalId" \
+              --role-definition-id "$roleId" \
+              --scope "/" || true
 
       - name: Expose scheduler URL to Web-App
         shell: bash

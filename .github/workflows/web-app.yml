@@ -4,24 +4,13 @@ name: Web-App Reusable
 on:
   workflow_call:
     inputs:
-      RG:
-        required: true
-        type: string
-      APP:
-        required: true
-        type: string
-      TIMEOUT:
-        required: true
-        type: number
-      COSMOS:
-        required: true
-        type: string
-      SCHED_FUNC:
-        required: true
-        type: string
+      RG:          { required: true, type: string }
+      APP:         { required: true, type: string }
+      TIMEOUT:     { required: true, type: number }
+      COSMOS:      { required: true, type: string }
+      SCHED_FUNC:  { required: true, type: string }
     secrets:
-      AZURE_CREDENTIALS:
-        required: true
+      AZURE_CREDENTIALS: { required: true }
 
   workflow_dispatch:
   push:
@@ -33,7 +22,6 @@ on:
 jobs:
   deploy-web-app:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v3
 
@@ -53,23 +41,35 @@ jobs:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Grant Cosmos “Built-in Data Contributor” to Web-App MSI
+      # ────────────────────────────────────────────────────────────────
+      # FIX: inputs promoted to env → no more empty CLI arguments
+      # ────────────────────────────────────────────────────────────────
+      - name: Grant Cosmos Data Contributor to Web-App MSI
+        env:
+          RG:     ${{ inputs.RG }}
+          APP:    ${{ inputs.APP }}
+          COSMOS: ${{ inputs.COSMOS }}
         run: |
           set -eo pipefail
+          [[ -z "$RG" || -z "$APP" || -z "$COSMOS" ]] && {
+            echo "RG, APP or COSMOS not set" >&2; exit 1; }
+
           principalId=$(az webapp identity show \
-            -g ${{ inputs.RG }} \
-            -n ${{ inputs.APP }} \
-            --query principalId -o tsv)
+              --resource-group "$RG" \
+              --name           "$APP" \
+              --query principalId -o tsv)
+
           roleId=$(az cosmosdb sql role definition list \
-            -g ${{ inputs.RG }} \
-            --account-name ${{ inputs.COSMOS }} \
-            --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+              --resource-group "$RG" \
+              --account-name   "$COSMOS" \
+              --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+
           az cosmosdb sql role assignment create \
-            --resource-group      ${{ inputs.RG }} \
-            --account-name        ${{ inputs.COSMOS }} \
-            --principal-id        $principalId \
-            --role-definition-id  $roleId \
-            --scope "/" || true
+              --resource-group  "$RG" \
+              --account-name    "$COSMOS" \
+              --principal-id    "$principalId" \
+              --role-definition-id "$roleId" \
+              --scope "/" || true
 
           echo "✅ web-app MSI granted data-plane role"
 
@@ -115,10 +115,7 @@ jobs:
             sleep $((attempt*45))
           done
 
-          if ! $success; then
-            echo "💥 web-app deploy failed"
-            exit 1
-          fi
+          $success || { echo "💥 web-app deploy failed"; exit 1; }
 
       - name: Restart web-app and wait health
         shell: bash
