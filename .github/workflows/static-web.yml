@@ -1,13 +1,14 @@
+# .github/workflows/static-web.yml
 name: Frontend Static Web App
 
 on:
-  # ── allow the file to be called from another workflow ───────────────
+  # allow the file to be called from another workflow
   workflow_call:
     secrets:
       AZURE_STATIC_WEB_APPS_TOKEN:
         required: true
 
-  # ── keep the original standalone triggers ──────────────────────────
+  # keep the original standalone triggers
   push:
     branches: [ main ]
     paths: [ 'frontend/**' ]
@@ -32,7 +33,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: npm install
 
       - name: Build
         working-directory: frontend
