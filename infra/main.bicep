@@ -1,4 +1,4 @@
-﻿// main.bicep
+﻿// infra/main.bicep
 targetScope = 'resourceGroup'
 
 @description('Azure region')
@@ -12,7 +12,7 @@ param timeout int = 1800
 
 var appName        = 'cursus-test-app'
 var schedFuncName  = 'cursus-test-sched'
-var staticSiteName = 'cursus-web'        // ← NEW
+var staticSiteName = 'cursus-web'        // ← Static Web App name
 
 // 1) App-Service Plan -------------------------------------------------
 module planModule './modules/plan.bicep' = {
@@ -78,3 +78,4 @@ output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
 output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
+output staticSiteName        string = staticWebModule.outputs.staticSiteName   // ← NEW

@@ -1,4 +1,5 @@
-﻿name: Azure Deployment (Test)
+﻿# .github/workflows/deploy.yml
+name: Azure Deployment (Test)
 
 on:
   push:
@@ -20,10 +21,10 @@ jobs:
   infra:
     uses: ./.github/workflows/infra.yml
     with:
-      RG:       cursus-test-rg
-      LOCATION: eastasia
-      PLAN_SKU: B1
-      TIMEOUT:  1800
+      RG:       ${{ env.RG }}
+      LOCATION: ${{ env.LOCATION }}
+      PLAN_SKU: ${{ env.PLAN_SKU }}
+      TIMEOUT:  ${{ env.TIMEOUT }}
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -32,34 +33,33 @@ jobs:
     needs: infra
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:         cursus-test-rg
-      APP:        cursus-test-app
-      TIMEOUT:    1800
+      RG:         ${{ env.RG }}
+      APP:        ${{ env.APP }}
+      TIMEOUT:    ${{ env.TIMEOUT }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
   scheduler:
     needs: infra
     uses: ./.github/workflows/scheduler.yml
     with:
-      RG:         cursus-test-rg
-      APP:        cursus-test-app
+      RG:         ${{ env.RG }}
+      APP:        ${{ env.APP }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
   # ────────────────────────────────────────────────────────────────────
-  # NEW ▪ Front-end Static Web App upload  (runs in parallel)
+  # Front-end Static Web App (retrieves its own deployment token) ─────
   # ────────────────────────────────────────────────────────────────────
   static_web:
     needs: infra
     uses: ./.github/workflows/static-web.yml
     with:
       RG:               ${{ env.RG }}
-      STATIC_SITE_NAME: cursus-web
+      STATIC_SITE_NAME: ${{ needs.infra.outputs.static_site }}
     secrets:
-      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
-      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
