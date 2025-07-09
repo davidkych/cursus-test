@@ -26,7 +26,7 @@ jobs:
       PLAN_SKU: B1
       TIMEOUT:  1800
     secrets:
-      AZURE_CREDENTIALS:   ${{ secrets.AZURE_CREDENTIALS }}
+      AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   web_app:
@@ -42,7 +42,7 @@ jobs:
       AZURE_CREDENTIALS:   ${{ secrets.AZURE_CREDENTIALS }}
 
   scheduler:
-    needs: infra
+    needs: web_app
     uses: ./.github/workflows/scheduler.yml
     with:
       RG:         cursus-test-rg
