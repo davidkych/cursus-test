@@ -12,8 +12,9 @@ param timeout int = 1800
 
 var appName        = 'cursus-test-app'
 var schedFuncName  = 'cursus-test-sched'
+var staticSiteName = 'cursus-web'        // ← NEW
 
-// 1) Plan
+// 1) App-Service Plan -------------------------------------------------
 module planModule './modules/plan.bicep' = {
   name: 'plan'
   params: {
@@ -23,19 +24,17 @@ module planModule './modules/plan.bicep' = {
   }
 }
 
-// 2) Cosmos DB
+// 2) Cosmos DB --------------------------------------------------------
 module cosmosModule './modules/cosmos.bicep' = {
   name: 'cosmos'
   params: {
     location: location
     appName:  appName
   }
-  dependsOn: [
-    planModule
-  ]
+  dependsOn: [ planModule ]
 }
 
-// 3) Web App
+// 3) FastAPI Web-App --------------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -48,13 +47,10 @@ module webAppModule './modules/webapp.bicep' = {
     appName:        appName
     schedFuncName:  schedFuncName
   }
-  dependsOn: [
-    cosmosModule
-    planModule
-  ]
+  dependsOn: [ cosmosModule, planModule ]
 }
 
-// 4) Durable Scheduler
+// 4) Durable Scheduler -----------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -66,12 +62,19 @@ module schedulerModule './modules/scheduler.bicep' = {
     containerName:          cosmosModule.outputs.containerName
     appName:                appName
   }
-  dependsOn: [
-    cosmosModule
-    planModule
-  ]
+  dependsOn: [ cosmosModule, planModule ]
+}
+
+// 5) Static Web-App (Vue frontend) -----------------------------------
+module staticWebModule './modules/staticweb.bicep' = {
+  name: 'staticWeb'
+  params: {
+    location:       location
+    staticSiteName: staticSiteName
+  }
 }
 
 output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
+output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname

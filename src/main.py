@@ -1,7 +1,21 @@
 ﻿# ── src/main.py ───────────────────────────────────────────────────────
+import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# core modules
+# ── Initialise app & CORS --------------------------------------------
+app = FastAPI()
+
+frontend_origin = os.getenv("FRONTEND_ORIGIN", "*")   # set in App-Service settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[frontend_origin] if frontend_origin != "*" else ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── core modules ------------------------------------------------------
 from routers.hello.endpoints               import router as hello_router
 from routers.healthz.endpoints             import router as health_router
 from routers.jsondata.endpoints            import router as jsondata_router
@@ -10,7 +24,7 @@ from routers.log.endpoints                 import router as log_router
 from routers.log.html_console_endpoint     import router as log_console_router
 from routers.schedule.endpoints            import router as schedule_router            # ← NEW
 
-# LCSD sub-modules
+# ── LCSD sub-modules --------------------------------------------------
 from routers.lcsd.probe_endpoints                 import router as lcsd_probe_router
 from routers.lcsd.html_probe_endpoints            import router as lcsd_html_probe_router
 from routers.lcsd.master_endpoints                import router as lcsd_master_router
@@ -28,18 +42,15 @@ from routers.lcsd.html_availability_endpoints     import router as lcsd_html_ava
 from routers.lcsd.html_dashboard_endpoints        import router as lcsd_html_dashboard_router
 from routers.lcsd.html_dashboard_monthview_endpoints import router as lcsd_html_monthview_router
 
-app = FastAPI()
-
-# ── core routes ──────────────────────────────────────────────────────
+# ── include routes ----------------------------------------------------
 app.include_router(hello_router)
 app.include_router(health_router)
 app.include_router(jsondata_router)
 app.include_router(html_json_router)
 app.include_router(log_router)
 app.include_router(log_console_router)
-app.include_router(schedule_router)      # ← NEW
+app.include_router(schedule_router)          # ← NEW
 
-# ── LCSD routes ──────────────────────────────────────────────────────
 app.include_router(lcsd_probe_router)
 app.include_router(lcsd_html_probe_router)
 app.include_router(lcsd_master_router)
@@ -57,7 +68,7 @@ app.include_router(lcsd_html_availability_router)
 app.include_router(lcsd_html_dashboard_router)
 app.include_router(lcsd_html_monthview_router)
 
-# ── root ─────────────────────────────────────────────────────────────
+# ── root --------------------------------------------------------------
 @app.get("/", include_in_schema=False)
 def root():
     return {
