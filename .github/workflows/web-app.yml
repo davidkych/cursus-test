@@ -20,11 +20,7 @@ on:
         required: true
         type: string
     secrets:
-      AZURE_CLIENT_ID:
-        required: true
-      AZURE_TENANT_ID:
-        required: true
-      AZURE_SUBSCRIPTION_ID:
+      AZURE_CREDENTIALS:
         required: true
 
   workflow_dispatch:
@@ -54,20 +50,27 @@ jobs:
 
       - uses: azure/login@v1
         with:
-          client-id:       ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id:       ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          auth-type: SERVICE_PRINCIPAL
+          creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Grant Cosmos “Built-in Data Contributor” to Web-App MSI
         run: |
           set -eo pipefail
-          principalId=$(az webapp identity show -g ${{ inputs.RG }} -n ${{ inputs.APP }} --query principalId -o tsv)
-          roleId=$(az cosmosdb sql role definition list -g ${{ inputs.RG }} --account-name ${{ inputs.COSMOS }} \
-                   --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
-          az cosmosdb sql role assignment create -g ${{ inputs.RG }} -n ${{ inputs.COSMOS }} \
-            --principal-id $principalId --role-definition-id $roleId --scope "/" || true
+          principalId=$(az webapp identity show \
+            -g ${{ inputs.RG }} \
+            -n ${{ inputs.APP }} \
+            --query principalId -o tsv)
+          roleId=$(az cosmosdb sql role definition list \
+            -g ${{ inputs.RG }} \
+            --account-name ${{ inputs.COSMOS }} \
+            --query "[?roleName=='Cosmos DB Built-in Data Contributor'].id" -o tsv)
+          az cosmosdb sql role assignment create \
+            --resource-group      ${{ inputs.RG }} \
+            --account-name        ${{ inputs.COSMOS }} \
+            --principal-id        $principalId \
+            --role-definition-id  $roleId \
+            --scope "/" || true
 
-          # ── re-added confirmation echo ───────────────────────────────────────
           echo "✅ web-app MSI granted data-plane role"
 
       - name: Configure Web-App settings
