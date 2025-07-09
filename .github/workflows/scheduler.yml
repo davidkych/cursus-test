@@ -4,17 +4,17 @@ name: Scheduler Reusable
 on:
   workflow_call:
     inputs:
-      RG:        { required: true, type: string }
-      APP:       { required: true, type: string }
-      SCHED_FUNC:{ required: true, type: string }
-      COSMOS:    { required: true, type: string }
+      RG:         { required: true, type: string }
+      APP:        { required: true, type: string }
+      SCHED_FUNC: { required: true, type: string }   # ← space added after colon
+      COSMOS:     { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
 
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: [ 'src/scheduler_fapp/**' ]
+    paths:     [ 'src/scheduler_fapp/**' ]
 
 jobs:
   deploy-scheduler:
