@@ -31,6 +31,9 @@ def orchestrator(ctx: df.DurableOrchestrationContext):  # noqa: D401
             "instanceId": ctx.instance_id,
             "exec_at_utc": data["exec_at_utc"],
             "prompt_type": data["prompt_type"],
+            "tag": data.get("tag"),
+            "secondary_tag": data.get("secondary_tag"),
+            "tertiary_tag": data.get("tertiary_tag"),
         },
     )
 

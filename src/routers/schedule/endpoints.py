@@ -1,7 +1,7 @@
 # src/routers/schedule/endpoints.py
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Optional
 
 from .create import handle_create
 from .status import handle_status
@@ -23,6 +23,17 @@ class ScheduleRequest(BaseModel):
     prompt_type: str = Field(..., description="e.g. `log.append`, `http.call`")
     payload: dict[str, Any] = Field(
         ..., description="Arbitrary JSON payload forwarded to the prompt handler"
+    )
+
+    # NEW – optional tagging fields
+    tag: Optional[str] = Field(
+        None, description="Primary tag attached to the schedule (optional)"
+    )
+    secondary_tag: Optional[str] = Field(
+        None, description="Secondary tag (optional)"
+    )
+    tertiary_tag: Optional[str] = Field(
+        None, description="Tertiary tag (optional)"
     )
 
 class ScheduleResponse(BaseModel):

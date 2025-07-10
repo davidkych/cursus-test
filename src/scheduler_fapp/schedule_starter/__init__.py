@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any
 
-from utils import to_utc_iso, log_to_api   # ← updated import
+from utils import to_utc_iso, log_to_api
 
 
 def _make_location_header(instance_id: str) -> str:
@@ -66,10 +66,14 @@ async def main(  # ← **async**
                 mimetype="application/json",
             )
 
+        # ── orchestration input – now with optional tags ──────────────
         orch_input = {
             "exec_at_utc": exec_at_utc,
             "prompt_type": body["prompt_type"],
             "payload": body["payload"],
+            "tag": body.get("tag"),
+            "secondary_tag": body.get("secondary_tag"),
+            "tertiary_tag": body.get("tertiary_tag"),
         }
 
         # ── create orchestration ───────────────────────────────────────
