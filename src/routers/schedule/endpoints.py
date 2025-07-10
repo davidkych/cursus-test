@@ -11,7 +11,7 @@ from .wipe import handle_wipe
 
 router = APIRouter()
 
-# ── Pydantic models ─────────────────────────────────────────────────
+# ── Pydantic models ──────────────────────────────────────────────────
 class ScheduleRequest(BaseModel):
     exec_at: str = Field(
         ...,
@@ -20,14 +20,14 @@ class ScheduleRequest(BaseModel):
             "(e.g. 2025-07-06T15:30:00+08:00 or +00:00 – must be ≥ 60 s in the future)"
         ),
     )
-    prompt_type: str = Field(..., description="e.g. `log.append`, `http.call`")
+    prompt_type: str = Field(..., description="e.g. log.append, http.call")
     payload: dict[str, Any] = Field(
         ..., description="Arbitrary JSON payload forwarded to the prompt handler"
     )
 
     # NEW – optional tagging fields
     tag: Optional[str] = Field(
-        None, description="Primary tag attached to the schedule (optional)"
+        None, description="Primary tag for the scheduled job (optional)"
     )
     secondary_tag: Optional[str] = Field(
         None, description="Secondary tag (optional)"
@@ -36,10 +36,12 @@ class ScheduleRequest(BaseModel):
         None, description="Tertiary tag (optional)"
     )
 
+
 class ScheduleResponse(BaseModel):
     transaction_id: str
 
-# ── Routes ────────────────────────────────────────────────────────────
+
+# ── Routes ───────────────────────────────────────────────────────────
 @router.post(
     "/api/schedule",
     response_model=ScheduleResponse,
@@ -49,12 +51,14 @@ def create_schedule(req: ScheduleRequest):
     transaction_id = handle_create(req)
     return ScheduleResponse(transaction_id=transaction_id)
 
+
 @router.get(
     "/api/schedule/{transaction_id}/status",
     summary="Fetch Durable runtime status",
 )
 def get_schedule_status(transaction_id: str):
     return handle_status(transaction_id)
+
 
 @router.delete(
     "/api/schedule/{transaction_id}",
@@ -64,12 +68,14 @@ def get_schedule_status(transaction_id: str):
 def delete_schedule(transaction_id: str):
     handle_delete(transaction_id)
 
+
 @router.get(
     "/api/schedule",
     summary="List all scheduled jobs and their statuses",
 )
 def list_schedules():
     return handle_list()
+
 
 @router.delete(
     "/api/schedule",
