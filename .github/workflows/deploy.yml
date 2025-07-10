@@ -10,6 +10,8 @@ permissions:
   id-token: write
   contents: read
 
+# These values are handy inside individual steps; they are **not** used in any
+# job-level expressions, so the parser no longer complains.
 env:
   RG:       cursus-test-rg
   LOCATION: eastasia
