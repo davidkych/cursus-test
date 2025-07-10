@@ -62,3 +62,4 @@ jobs:
           echo "static_site=$STATIC" >> $GITHUB_OUTPUT
 
           echo "🏗 infra ready – cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"
+
