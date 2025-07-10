@@ -2,6 +2,12 @@
 name: Scheduler Reusable
 
 on:
+  # ──────────────────────────────
+  # This workflow is now triggered
+  # *only* as a reusable workflow
+  #   – via `deploy.yml`
+  # *or* manually through the UI.
+  # ──────────────────────────────
   workflow_call:
     inputs:
       RG:         { required: true, type: string }
@@ -12,9 +18,6 @@ on:
       AZURE_CREDENTIALS: { required: true }
 
   workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths:     [ 'src/scheduler_fapp/**' ]
 
 jobs:
   deploy-scheduler:
