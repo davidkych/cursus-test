@@ -1,4 +1,4 @@
-# src/scheduler_fapp/schedule_starter/__init__.py
+# ── src/scheduler_fapp/schedule_starter/__init__.py ──────────────────
 import azure.functions as func
 import azure.durable_functions as df
 import json
@@ -6,11 +6,13 @@ import logging
 import os
 from typing import Any
 
-from utils import to_utc_iso, log_to_api
+from utils import to_utc_iso, log_to_api   # ← updated import
 
 
 def _make_location_header(instance_id: str) -> str:
-    """Build a public status-polling URL for the given instance_id."""
+    """
+    Build a *public* status-polling URL for the given `instance_id`.
+    """
     site_name = os.getenv("WEBSITE_SITE_NAME", "")
     base = (
         f"https://{site_name}.azurewebsites.net"
@@ -20,20 +22,23 @@ def _make_location_header(instance_id: str) -> str:
     return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}"
 
 
-async def main(  # HTTP POST /api/schedule
+async def main(  # ← **async**
     req: func.HttpRequest,
     starter: str,
 ) -> func.HttpResponse:  # noqa: D401
     """
-    Starts an orchestration for the requested schedule.
+    HTTP entry-point that kicks off the orchestration without relying on
+    `create_check_status_response` (work-around for coroutine/replace bug).
 
-    July 2025 – now accepts optional **tag**, **secondary_tag** and
-    **tertiary_tag** fields which are passed through unchanged.
+    **Important:** `DurableOrchestrationClient.start_new` is *asynchronous* and
+    therefore **must be awaited** – otherwise the coroutine object leaks into
+    the JSON response, triggering  
+    “TypeError: Object of type coroutine is not JSON serializable”.
     """
     try:
         logging.info("↪ /schedule called")
 
-        # ── Parse & validate body ─────────────────────────────────────
+        # ── payload parsing & validation ───────────────────────────────
         try:
             body: dict[str, Any] = req.get_json()  # type: ignore[assignment]
         except ValueError:
@@ -52,6 +57,7 @@ async def main(  # HTTP POST /api/schedule
             )
 
         try:
+            # normalise to *UTC-aware* ISO string
             exec_at_utc = to_utc_iso(body["exec_at"])
         except ValueError as exc:
             return func.HttpResponse(
@@ -61,18 +67,14 @@ async def main(  # HTTP POST /api/schedule
             )
 
         orch_input = {
-            "exec_at_utc":  exec_at_utc,
-            "prompt_type":  body["prompt_type"],
-            "payload":      body["payload"],
-            # NEW – forward optional tags (may be None)
-            "tag":           body.get("tag"),
-            "secondary_tag": body.get("secondary_tag"),
-            "tertiary_tag":  body.get("tertiary_tag"),
+            "exec_at_utc": exec_at_utc,
+            "prompt_type": body["prompt_type"],
+            "payload": body["payload"],
         }
 
-        # ── Kick off orchestration ───────────────────────────────────
+        # ── create orchestration ───────────────────────────────────────
         client = df.DurableOrchestrationClient(starter)
-        instance_id = await client.start_new(
+        instance_id = await client.start_new(  # ← **await** the coroutine
             "schedule_orchestrator",
             None,
             orch_input,
@@ -83,11 +85,9 @@ async def main(  # HTTP POST /api/schedule
             "info",
             f"Scheduled {body['prompt_type']} at {body['exec_at']} "
             f"(instance {instance_id})",
-            secondary_tag=body.get("tag") or "scheduler",
-            tertiary_tag=body.get("secondary_tag"),
         )
 
-        # ── Custom 202 Accepted response ─────────────────────────────
+        # ── manual 202 Accepted response (work-around) ────────────────
         location = _make_location_header(instance_id)
         return func.HttpResponse(
             json.dumps({"id": instance_id}),
@@ -99,7 +99,7 @@ async def main(  # HTTP POST /api/schedule
             },
         )
 
-    # ── Diagnostics ──────────────────────────────────────────────────
+    # ── generic diagnostics ───────────────────────────────────────────
     except Exception as exc:  # noqa: BLE001
         logging.exception("Unhandled error in /schedule")
         return func.HttpResponse(
@@ -107,3 +107,4 @@ async def main(  # HTTP POST /api/schedule
             status_code=500,
             mimetype="application/json",
         )
+
