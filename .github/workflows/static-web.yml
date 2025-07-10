@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      # ── Azure login ────────────────────────────────────────────────────────
+      # ── Azure login via the existing service-principal secret ───────────────
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
+          cache: 'npm'
           cache-dependency-path: frontend/package.json
 
       - name: Install dependencies
@@ -45,7 +45,7 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # ── Fetch a short-lived deployment token directly from Azure ──────────
+      # ── Fetch a short-lived deployment token directly from Azure ───────────
       - name: Obtain Static Web App deployment token
         id: swa_token
         uses: azure/CLI@v2
@@ -59,24 +59,12 @@ jobs:
             echo "::add-mask::$TOKEN"
             echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
 
-      # ── Deploy ────────────────────────────────────────────────────────────
+      # ── Deploy ─────────────────────────────────────────────────────────────
       - name: Deploy to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
+        uses: Azure/static-web-apps-deploy@v1          # pinned
         with:
           azure_static_web_apps_api_token: ${{ steps.swa_token.outputs.TOKEN }}
           repo_token:                      ${{ secrets.GITHUB_TOKEN }}
           action: upload
           app_location:    frontend
           output_location: dist
-
-      # ── NEW: shout the real public URL so it’s hard to miss ───────────────
-      - name: 📣  Show deployed site URL
-        shell: bash
-        run: |
-          set -eo pipefail
-          HOST=$(az staticwebapp show \
-                   --name "${STATIC_SITE_NAME}" \
-                   --resource-group "${RG}" \
-                   --query properties.defaultHostname -o tsv)
-          echo "🚀 Static site is live → https://${HOST}"
-          echo "url=https://${HOST}" >> $GITHUB_OUTPUT
