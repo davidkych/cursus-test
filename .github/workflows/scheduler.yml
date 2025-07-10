@@ -1,23 +1,19 @@
 # .github/workflows/scheduler.yml
 name: Scheduler Reusable
 
+# ─────────────────────────────────────────────────────────────────
+# Triggered **only** via `workflow_call` from deploy.yml.
+# Stand-alone triggers have been removed.
+# ─────────────────────────────────────────────────────────────────
 on:
-  # ──────────────────────────────
-  # This workflow is now triggered
-  # *only* as a reusable workflow
-  #   – via `deploy.yml`
-  # *or* manually through the UI.
-  # ──────────────────────────────
   workflow_call:
     inputs:
       RG:         { required: true, type: string }
       APP:        { required: true, type: string }
-      SCHED_FUNC: { required: true, type: string }   # ← space added after colon
+      SCHED_FUNC: { required: true, type: string }
       COSMOS:     { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
-
-  workflow_dispatch:
 
 jobs:
   deploy-scheduler:

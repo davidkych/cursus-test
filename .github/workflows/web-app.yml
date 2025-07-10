@@ -1,6 +1,10 @@
 # .github/workflows/web-app.yml
 name: Web-App Reusable
 
+# ─────────────────────────────────────────────────────────────
+# This workflow is triggered **only** as a reusable workflow
+# via deploy.yml.  All standalone triggers have been removed.
+# ─────────────────────────────────────────────────────────────
 on:
   workflow_call:
     inputs:
@@ -11,13 +15,6 @@ on:
       SCHED_FUNC:  { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
-
-  workflow_dispatch:
-  push:
-    branches: [ main ]
-    paths:
-      - 'src/**'
-      - '!src/scheduler_fapp/**'
 
 jobs:
   deploy-web-app:
@@ -135,4 +132,3 @@ jobs:
         with:
           name: webapp-log
           path: live.log
-
