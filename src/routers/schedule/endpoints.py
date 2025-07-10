@@ -1,7 +1,7 @@
 # src/routers/schedule/endpoints.py
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Any
+from typing import Any, Optional
 
 from .create import handle_create
 from .status import handle_status
@@ -25,8 +25,20 @@ class ScheduleRequest(BaseModel):
         ..., description="Arbitrary JSON payload forwarded to the prompt handler"
     )
 
+    # NEW – optional tagging metadata
+    tag: Optional[str] = Field(
+        None, description="Primary tag for the scheduled job (optional)"
+    )
+    secondary_tag: Optional[str] = Field(
+        None, description="Secondary tag (optional)"
+    )
+    tertiary_tag: Optional[str] = Field(
+        None, description="Tertiary tag (optional)"
+    )
+
 class ScheduleResponse(BaseModel):
     transaction_id: str
+
 
 # ── Routes ────────────────────────────────────────────────────────────
 @router.post(
@@ -38,12 +50,14 @@ def create_schedule(req: ScheduleRequest):
     transaction_id = handle_create(req)
     return ScheduleResponse(transaction_id=transaction_id)
 
+
 @router.get(
     "/api/schedule/{transaction_id}/status",
     summary="Fetch Durable runtime status",
 )
 def get_schedule_status(transaction_id: str):
     return handle_status(transaction_id)
+
 
 @router.delete(
     "/api/schedule/{transaction_id}",
@@ -53,6 +67,7 @@ def get_schedule_status(transaction_id: str):
 def delete_schedule(transaction_id: str):
     handle_delete(transaction_id)
 
+
 @router.get(
     "/api/schedule",
     summary="List all scheduled jobs and their statuses",
@@ -60,10 +75,10 @@ def delete_schedule(transaction_id: str):
 def list_schedules():
     return handle_list()
 
+
 @router.delete(
     "/api/schedule",
     summary="Wipe **all** schedules (terminate, purge, clear registry)",
 )
 def wipe_schedules():
     return handle_wipe()
-

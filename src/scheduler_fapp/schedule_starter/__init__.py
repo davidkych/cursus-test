@@ -10,9 +10,7 @@ from utils import to_utc_iso, log_to_api   # ← updated import
 
 
 def _make_location_header(instance_id: str) -> str:
-    """
-    Build a *public* status-polling URL for the given `instance_id`.
-    """
+    """Build a *public* status-polling URL for the given `instance_id`."""
     site_name = os.getenv("WEBSITE_SITE_NAME", "")
     base = (
         f"https://{site_name}.azurewebsites.net"
@@ -33,7 +31,7 @@ async def main(  # ← **async**
     **Important:** `DurableOrchestrationClient.start_new` is *asynchronous* and
     therefore **must be awaited** – otherwise the coroutine object leaks into
     the JSON response, triggering  
-    “TypeError: Object of type coroutine is not JSON serializable”.
+    “TypeError: Object of type coroutine is not JSON serialisable”.
     """
     try:
         logging.info("↪ /schedule called")
@@ -66,10 +64,14 @@ async def main(  # ← **async**
                 mimetype="application/json",
             )
 
+        # ── orchestrator input (now includes optional tags) ───────────
         orch_input = {
             "exec_at_utc": exec_at_utc,
             "prompt_type": body["prompt_type"],
             "payload": body["payload"],
+            "tag": body.get("tag"),
+            "secondary_tag": body.get("secondary_tag"),
+            "tertiary_tag": body.get("tertiary_tag"),
         }
 
         # ── create orchestration ───────────────────────────────────────
@@ -107,4 +109,3 @@ async def main(  # ← **async**
             status_code=500,
             mimetype="application/json",
         )
-
