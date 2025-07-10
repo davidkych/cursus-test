@@ -2,10 +2,14 @@
 """
 GET /api/status/{instanceId}
 
-Returns the full Durable-Functions orchestration status **with history** so we
-can diagnose timer issues, race conditions, etc.
+Returns the full Durable-Functions orchestration status **with history** so
+we can diagnose timer issues, race conditions, etc.
 
-Always anonymous (authLevel = "anonymous" in function.json).
+July 2025 · r2  
+────────────────
+• Exposes `tag`, `secondary_tag`, and `tertiary_tag` at the top level of
+  the JSON response (duplicated from the orchestration input) so that
+  clients do not need to parse the nested `input` object.
 """
 from __future__ import annotations
 
@@ -46,9 +50,17 @@ async def main(                       # HTTP GET  /api/status/{instanceId}
                 mimetype="application/json",
             )
 
-        # serialise DurableOrchestrationStatus to JSON
+        # serialise DurableOrchestrationStatus to dict
+        data = status.to_json()
+
+        # ── NEW: surface tag metadata at top level ────────────────────────
+        orchestration_input = data.get("input") or {}
+        for key in ("tag", "secondary_tag", "tertiary_tag"):
+            if key in orchestration_input:
+                data[key] = orchestration_input.get(key)
+
         return func.HttpResponse(
-            json.dumps(status.to_json(), indent=2, default=str),
+            json.dumps(data, indent=2, default=str),
             status_code=200,
             mimetype="application/json",
         )

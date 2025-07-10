@@ -8,6 +8,13 @@ import logging
 async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:   # noqa: D401
     """
     GET  /api/schedules   – List all jobs with metadata *and* live runtimeStatus.
+
+    July 2025 · r2  
+    ─────────────────
+    • The output now surfaces `tag`, `secondary_tag`, and `tertiary_tag`
+      (if present) at the top level of each job record so that consumers
+      can easily filter or group schedules without digging into the entity
+      state.
     """
     try:
         dclient = df.DurableOrchestrationClient(client)
@@ -25,10 +32,14 @@ async def main(req: func.HttpRequest, client: str) -> func.HttpResponse:   # noq
 
             jobs.append(
                 {
-                    "instanceId":   instance_id,
-                    "exec_at_utc":  info.get("exec_at_utc"),
-                    "prompt_type":  info.get("prompt_type"),
+                    "instanceId":    instance_id,
+                    "exec_at_utc":   info.get("exec_at_utc"),
+                    "prompt_type":   info.get("prompt_type"),
                     "runtimeStatus": runtime,
+                    # ── NEW tag metadata ──────────────────────────────────────
+                    "tag":            info.get("tag"),
+                    "secondary_tag":  info.get("secondary_tag"),
+                    "tertiary_tag":   info.get("tertiary_tag"),
                 }
             )
 
