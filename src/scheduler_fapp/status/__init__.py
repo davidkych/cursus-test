@@ -5,11 +5,11 @@ GET /api/status/{instanceId}
 Returns the full Durable-Functions orchestration status **with history**
 so we can diagnose timer issues, race conditions, etc.
 
-July 2025 · r4  
+July 2025 · r5  
 ────────────────
-FIX: `DurableOrchestrationStatus.to_json()` already returns a *dict* in
-azure-functions-durable ≥ 1.3.x.  
-Guard against both old (string) and new (dict) behaviours.
+* FIX: handles both old (< 1.3.x) and new (≥ 1.3.x) behaviours where
+  `DurableOrchestrationStatus.input` may be a JSON **string** instead of
+  a dict.  Guard against that to avoid AttributeError.
 """
 from __future__ import annotations
 
@@ -51,14 +51,26 @@ async def main(                       # HTTP GET  /api/status/{instanceId}
             )
 
         # azure-functions-durable ≥ 1.3.x → dict | ≤ 1.2.x → str
-        raw = status.to_json()
+        raw  = status.to_json()
         data = raw if isinstance(raw, dict) else json.loads(raw)
 
         # ── Surface tag metadata at top level ──────────────────────────────
-        orchestration_input = data.get("input") or {}
-        for key in ("tag", "secondary_tag", "tertiary_tag"):
-            if key in orchestration_input:
-                data[key] = orchestration_input.get(key)
+        raw_input = data.get("input")
+
+        # Durable ≥ 1.3.x returns `.input` as *string* JSON – parse it.
+        if isinstance(raw_input, str):
+            try:
+                orchestration_input = json.loads(raw_input)
+            except json.JSONDecodeError:
+                logging.warning("Unable to parse orchestration input JSON")
+                orchestration_input = {}
+        else:
+            orchestration_input = raw_input or {}
+
+        if isinstance(orchestration_input, dict):
+            for key in ("tag", "secondary_tag", "tertiary_tag"):
+                if key in orchestration_input:
+                    data[key] = orchestration_input[key]
 
         return func.HttpResponse(
             json.dumps(data, indent=2, default=str),
