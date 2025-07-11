@@ -1,17 +1,18 @@
-# src/routers/schedule/endpoints.py
+# ── src/routers/schedule/endpoints.py ────────────────────────────────
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from .create import handle_create
 from .status import handle_status
 from .delete import handle_delete
 from .list_schedules import handle_list
+from .search import handle_search          # ← NEW
 from .wipe import handle_wipe
 
 router = APIRouter()
 
-# ── Pydantic models ─────────────────────────────────────────────────
+# ── Pydantic models ──────────────────────────────────────────────────
 class ScheduleRequest(BaseModel):
     exec_at: str = Field(
         ...,
@@ -25,22 +26,17 @@ class ScheduleRequest(BaseModel):
         ..., description="Arbitrary JSON payload forwarded to the prompt handler"
     )
 
-    # NEW – optional tagging metadata
-    tag: Optional[str] = Field(
-        None, description="Primary tag for the scheduled job (optional)"
-    )
-    secondary_tag: Optional[str] = Field(
-        None, description="Secondary tag (optional)"
-    )
-    tertiary_tag: Optional[str] = Field(
-        None, description="Tertiary tag (optional)"
-    )
+    # optional tagging metadata
+    tag: Optional[str]          = Field(None, description="Primary tag (optional)")
+    secondary_tag: Optional[str] = Field(None, description="Secondary tag (optional)")
+    tertiary_tag: Optional[str]  = Field(None, description="Tertiary tag (optional)")
+
 
 class ScheduleResponse(BaseModel):
     transaction_id: str
 
 
-# ── Routes ────────────────────────────────────────────────────────────
+# ── Routes ───────────────────────────────────────────────────────────
 @router.post(
     "/api/schedule",
     response_model=ScheduleResponse,
@@ -82,3 +78,22 @@ def list_schedules():
 )
 def wipe_schedules():
     return handle_wipe()
+
+
+# ─────────────── NEW: tag-based search endpoint ──────────────────────
+@router.get(
+    "/api/schedule/search",
+    summary="Search instanceIds by tag metadata",
+)
+def search_schedules(
+    tag: Optional[str] = None,
+    secondary_tag: Optional[str] = None,
+    tertiary_tag: Optional[str] = None,
+):
+    """
+    Return a list of `instance_id` strings whose **tag, secondary_tag, and
+    tertiary_tag** match the supplied filters.  Any parameter left blank or
+    omitted acts as a wildcard and does **not** restrict the search.
+    """
+    instance_ids = handle_search(tag, secondary_tag, tertiary_tag)
+    return {"instance_ids": instance_ids}
