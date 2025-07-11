@@ -25,13 +25,9 @@ async def main(  # ← **async**
     starter: str,
 ) -> func.HttpResponse:  # noqa: D401
     """
-    HTTP entry-point that kicks off the orchestration without relying on
-    `create_check_status_response` (work-around for coroutine/replace bug).
-
-    **Important:** `DurableOrchestrationClient.start_new` is *asynchronous* and
-    therefore **must be awaited** – otherwise the coroutine object leaks into
-    the JSON response, triggering  
-    “TypeError: Object of type coroutine is not JSON serialisable”.
+    POST /api/schedule   – kick-off a new orchestration **and**
+    synchronously register the job in the schedule_entity so that
+    search/list calls can see it immediately (no race window).
     """
     try:
         logging.info("↪ /schedule called")
@@ -55,8 +51,7 @@ async def main(  # ← **async**
             )
 
         try:
-            # normalise to *UTC-aware* ISO string
-            exec_at_utc = to_utc_iso(body["exec_at"])
+            exec_at_utc = to_utc_iso(body["exec_at"])    # *UTC-aware* ISO
         except ValueError as exc:
             return func.HttpResponse(
                 json.dumps({"error": str(exc)}),
@@ -64,14 +59,14 @@ async def main(  # ← **async**
                 mimetype="application/json",
             )
 
-        # ── orchestrator input (now includes optional tags) ───────────
+        # ── orchestrator input (includes optional tags) ───────────────
         orch_input = {
-            "exec_at_utc": exec_at_utc,
-            "prompt_type": body["prompt_type"],
-            "payload": body["payload"],
-            "tag": body.get("tag"),
+            "exec_at_utc":  exec_at_utc,
+            "prompt_type":  body["prompt_type"],
+            "payload":      body["payload"],
+            "tag":           body.get("tag"),
             "secondary_tag": body.get("secondary_tag"),
-            "tertiary_tag": body.get("tertiary_tag"),
+            "tertiary_tag":  body.get("tertiary_tag"),
         }
 
         # ── create orchestration ───────────────────────────────────────
@@ -82,6 +77,21 @@ async def main(  # ← **async**
             orch_input,
         )
         logging.info("🎬 Started orchestration %s", instance_id)
+
+        # ── NEW: immediate registry update (avoids race) ──────────────
+        entity_id = df.EntityId("schedule_entity", "registry")
+        await client.signal_entity(           # fire-and-forget
+            entity_id,
+            "add",
+            {
+                "instanceId":    instance_id,
+                "exec_at_utc":   exec_at_utc,
+                "prompt_type":   body["prompt_type"],
+                "tag":           body.get("tag"),
+                "secondary_tag": body.get("secondary_tag"),
+                "tertiary_tag":  body.get("tertiary_tag"),
+            },
+        )
 
         log_to_api(
             "info",
