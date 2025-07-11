@@ -1,17 +1,24 @@
-# src/routers/schedule/helpers.py
+# ── src/routers/schedule/helpers.py ──────────────────────────────────
 import os
 import logging
 from typing import Optional
 from fastapi import HTTPException
 
-# constants for cold-start retries/delays
-COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "4"))
+# ─────────────────────────────────────────────────────────────────────
+# Cold-start back-off settings
+# Default is now **8 × 5 s = 40 s** which matches real-world cold starts
+# of Python Function-Apps on B-/S-plans.  Can still be overridden through
+# the existing env-vars without touching code.
+# ─────────────────────────────────────────────────────────────────────
+COLD_RETRIES = int(os.getenv("SCHEDULER_COLD_START_RETRIES", "8"))
 COLD_DELAY   = int(os.getenv("SCHEDULER_COLD_START_DELAY", "5"))
 
 _logger = logging.getLogger(__name__)
 _base_cache: Optional[str] = None
 
+
 def scheduler_base() -> str:
+    """Resolve the Function-App base URL with minimal I/O."""
     global _base_cache
     if _base_cache:
         return _base_cache
@@ -31,9 +38,11 @@ def scheduler_base() -> str:
     _logger.warning("Scheduler base unresolved – falling back to %s", _base_cache)
     return _base_cache
 
+
 def mgmt_key_qs() -> str:
     key = (os.getenv("SCHEDULER_MGMT_KEY") or "").strip()
     return f"&code={key}" if key else ""
+
 
 def status_url(instance_id: str) -> str:
     base = scheduler_base()
@@ -41,6 +50,7 @@ def status_url(instance_id: str) -> str:
     if key_qs:
         return f"{base}/runtime/webhooks/durabletask/instances/{instance_id}?{key_qs}"
     return f"{base}/api/status/{instance_id}"
+
 
 def terminate_url(instance_id: str) -> str:
     key_seg = mgmt_key_qs()
@@ -51,9 +61,11 @@ def terminate_url(instance_id: str) -> str:
         )
     return f"{scheduler_base()}/api/terminate/{instance_id}"
 
+
 def list_url() -> str:
     qs = mgmt_key_qs().lstrip("&")
     return f"{scheduler_base()}/api/schedules{('?' + qs) if qs else ''}"
+
 
 def forward_error(resp):
     try:
@@ -72,6 +84,7 @@ def forward_error(resp):
         },
     }
     raise HTTPException(status_code=resp.status_code, detail=detail)
+
 
 def extract_instance(resp) -> str:
     instance_id = None
