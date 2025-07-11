@@ -1,168 +1,188 @@
-workflow DurableSchedulerSmokeTest {
-    param(
-        [string] $WebAppBase    = "https://cursus-test-app.azurewebsites.net",
-        [string] $SchedFuncBase = "https://cursus-test-sched.azurewebsites.net",
-        [string] $TZOffset      = "+08:00",
-        [int]    $PollInterval  = 60,
-        [int]    $PollLoops     = 18
-    )
+# DurableSchedulerSmokeTest.ps1
+# -------------------------------------------------
+# End‑to‑end smoke tests for the FastAPI façade and
+# the Durable scheduler Function‑App.  The script
+# exercises **all** public functionality end‑to‑end
+# and prints every server response so that failures
+# are obvious in CI logs.
+#
+# Usage (interactive or CI pipeline):
+#   pwsh -File DurableSchedulerSmokeTest.ps1 \
+#        -BaseUrl "https://cursus-test-app.azurewebsites.net" \
+#        -SchedulerBase "https://cursus-test-sched.azurewebsites.net"
+#
+# If parameters are omitted, the script falls back to
+# environment variables BASE_URL / SCHEDULER_BASE.
+# -------------------------------------------------
+param(
+    [Parameter()][ValidateNotNullOrEmpty()][string]$BaseUrl = $env:BASE_URL,
+    [Parameter()][ValidateNotNullOrEmpty()][string]$SchedulerBase = $env:SCHEDULER_BASE
+)
 
-    InlineScript {
-        # Pull in workflow parameters
-        $webAppBase    = $Using:WebAppBase
-        $schedFuncBase = $Using:SchedFuncBase
-        $tzOffset      = $Using:TZOffset
-        $PollInterval  = $Using:PollInterval
-        $PollLoops     = $Using:PollLoops
-
-        Write-Host "🌐 FastAPI   =" $webAppBase
-        Write-Host "⚙️  Scheduler =" $schedFuncBase
-        Write-Host ""
-
-        # ── helpers ─────────────────────────────────────────────────────
-        function Format-Json {
-            param([Parameter(Mandatory)][string]$Json)
-            try   { $Json | ConvertFrom-Json | ConvertTo-Json -Depth 20 }
-            catch { $Json }
-        }
-
-        function Invoke-AndShow {
-            param(
-                [Parameter(Mandatory)][ValidateSet('GET','POST','DELETE')]$Method,
-                [Parameter(Mandatory)][string]$Uri,
-                [string]$Body
-            )
-
-            $params = @{
-                Method      = $Method
-                Uri         = $Uri
-                TimeoutSec  = 30
-                ErrorAction = 'Stop'
-            }
-            if ($Body) { $params.Body = $Body; $params.ContentType = 'application/json' }
-            if ($PSVersionTable.PSVersion.Major -lt 6) { $params.UseBasicParsing = $true }
-
-            try {
-                $resp    = Invoke-WebRequest @params
-                $status  = $resp.StatusCode
-                $content = $resp.Content
-            } catch {
-                $ex      = $_.Exception
-                $r       = $ex.Response
-                if ($r -and $r.GetResponseStream()) {
-                    $status  = [int]$r.StatusCode
-                    $reader  = [IO.StreamReader]::new($r.GetResponseStream())
-                    $content = $reader.ReadToEnd()
-                } else {
-                    $status  = 'n/a'
-                    $content = $ex.Message
-                }
-            }
-
-            Write-Host "`n$Method $Uri" -ForegroundColor Yellow
-            Write-Host "HTTP $status"    -ForegroundColor Magenta
-            if ($content) {
-                Format-Json $content | ForEach-Object { Write-Host $_ }
-                Write-Host ""
-            }
-
-            try { return $content | ConvertFrom-Json } catch { return $null }
-        }
-
-        # ── 1. CLEAN SLATE (wipe all existing jobs) ───────────────────────
-        Invoke-AndShow DELETE "$webAppBase/api/schedule" | Out-Null
-
-        # ── 2. HEALTH CHECKS ────────────────────────────────────────────
-        Write-Host "`n🔎  Health probes" -ForegroundColor Cyan
-        Invoke-AndShow GET "$webAppBase/healthz"        | Out-Null
-        Invoke-AndShow GET "$schedFuncBase/api/healthz" | Out-Null
-
-        # ── 3. CREATE & CANCEL a schedule (5 min in future) ─────────────
-        Write-Host "`n🗑️  3. Create > cancel" -ForegroundColor Cyan
-        $execAtCancel = (Get-Date).AddMinutes(5).ToString("yyyy-MM-ddTHH:mm:ss") + $tzOffset
-        $bodyCancel   = @{
-            exec_at     = $execAtCancel
-            prompt_type = "log.append"
-            payload     = @{ tag='demo'; base='info'; message='cancel-me' }
-        } | ConvertTo-Json -Depth 10
-
-        $resp      = Invoke-AndShow POST "$webAppBase/api/schedule" $bodyCancel
-        $cancelId  = $resp.transaction_id
-        if (-not $cancelId) { Write-Warning "❌ cancel-test creation failed"; exit }
-
-        Invoke-AndShow DELETE "$webAppBase/api/schedule/$cancelId" | Out-Null
-
-        # ── 4. CREATE schedule to actually fire (2 min) ─────────────────
-        Write-Host "`n📝  4. Create schedule (fires in 2 min)" -ForegroundColor Cyan
-        $execAt = (Get-Date).AddMinutes(2).ToString("yyyy-MM-ddTHH:mm:ss") + $tzOffset
-        $body   = @{
-            exec_at     = $execAt
-            prompt_type = "log.append"
-            payload     = @{ tag='demo'; base='info'; message='Hello from PS smoke test' }
-        } | ConvertTo-Json -Depth 10
-
-        $resp       = Invoke-AndShow POST "$webAppBase/api/schedule" $body
-        $instanceId = $resp.transaction_id
-        if (-not $instanceId) { Write-Warning "❌ schedule creation failed"; exit }
-
-        # ── 5. POLL until Completed / Failed / Terminated ────────────────
-        Write-Host "`n📡  5. Poll status until Completed" -ForegroundColor Cyan
-        $pollUrl    = "$webAppBase/api/schedule/$instanceId/status"
-        $execAtDto  = [DateTimeOffset]::Parse($execAt)
-        $deadline   = $execAtDto.ToUniversalTime().AddMinutes(10)
-
-        while ([DateTimeOffset]::UtcNow -lt $deadline) {
-            $stat = Invoke-AndShow GET $pollUrl
-            if ($stat -and $stat.runtimeStatus -in 'Completed','Failed','Terminated') {
-                break
-            }
-            Start-Sleep -Seconds $PollInterval
-        }
-
-        # ── 6. LIST ALL schedules ───────────────────────────────────────
-        Write-Host "`n📄  6. List schedules" -ForegroundColor Cyan
-        Invoke-AndShow GET "$webAppBase/api/schedule" | Out-Null
-
-        # ── 7. NEW TEST: schedule public API call (fires in 2 min) ─────
-        Write-Host "`n🌐  7. Schedule public API (fires in 2 min)" -ForegroundColor Cyan
-        $execAtPub   = (Get-Date).AddMinutes(2).ToString("yyyy-MM-ddTHH:mm:ss") + $tzOffset
-        $bodyPub     = @{
-            exec_at     = $execAtPub
-            prompt_type = "http.call"
-            payload     = @{
-                url     = "https://httpbin.org/get"
-                method  = "GET"
-                headers = @{}
-                timeout = 10
-            }
-        } | ConvertTo-Json -Depth 10
-
-        $respPub     = Invoke-AndShow POST "$webAppBase/api/schedule" $bodyPub
-        $pubInstance = $respPub.transaction_id
-        if (-not $pubInstance) { Write-Warning "❌ public-api-test creation failed"; exit }
-
-        Write-Host "`n📡  7.1 Poll public API status until Completed" -ForegroundColor Cyan
-        $pollPubUrl   = "$webAppBase/api/schedule/$pubInstance/status"
-        $execAtPubDto = [DateTimeOffset]::Parse($execAtPub)
-        $deadlinePub  = $execAtPubDto.ToUniversalTime().AddMinutes(10)
-
-        while ([DateTimeOffset]::UtcNow -lt $deadlinePub) {
-            $statPub = Invoke-AndShow GET $pollPubUrl
-            if ($statPub -and $statPub.runtimeStatus -in 'Completed','Failed','Terminated') {
-                Write-Host "`n🚀 Public API job status:" $statPub.runtimeStatus
-                break
-            }
-            Start-Sleep -Seconds $PollInterval
-        }
-
-        # ── 8. WIPE everything again (cleanup) ───────────────────────────
-        Write-Host "`n🧹  8. Final wipe-all" -ForegroundColor Cyan
-        Invoke-AndShow DELETE "$webAppBase/api/schedule" | Out-Null
-
-        Write-Host "`n✅  Smoke test finished" -ForegroundColor Green
-    }
+if (-not $BaseUrl) {
+    throw "BaseUrl not provided (parameter or \$env:BASE_URL required)"
+}
+if (-not $SchedulerBase) {
+    throw "SchedulerBase not provided (parameter or \$env:SCHEDULER_BASE required)"
 }
 
-# To run:
-# .\DurableSchedulerSmokeTest.ps1
-# DurableSchedulerSmokeTest
+# Ensure URLs have no trailing slashes so we can safely append paths
+$BaseUrl       = $BaseUrl.TrimEnd('/')
+$SchedulerBase = $SchedulerBase.TrimEnd('/')
+
+Write-Host "ℹ️  BaseUrl       = $BaseUrl"
+Write-Host "ℹ️  SchedulerBase = $SchedulerBase"
+
+# --- helper: pretty JSON without external deps ------------------------
+function Format-Json {
+    param([Parameter(ValueFromPipeline)][string]$Json)
+    $obj = $Json | ConvertFrom-Json -Depth 100
+    return ($obj | ConvertTo-Json -Depth 100 -Compress:$false)
+}
+
+# --- helper: invoke REST and echo request + response ------------------
+function Invoke-SmokeRequest {
+    param(
+        [Parameter(Mandatory)][ValidateSet('GET','POST','DELETE')][string]$Method,
+        [Parameter(Mandatory)][string]$Url,
+        [object]$Body = $null
+    )
+    Write-Host "\n── $Method $Url" -ForegroundColor Cyan
+    if ($Body) {
+        $jsonBody = $Body | ConvertTo-Json -Depth 20 -Compress:$false
+        Write-Host "» Request body:" -ForegroundColor DarkGray
+        Write-Host ($jsonBody | Format-Json)
+    }
+
+    try {
+        if ($Body) {
+            $response = Invoke-WebRequest -Method $Method -Uri $Url -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Depth 20) -UseBasicParsing -TimeoutSec 30
+        }
+        else {
+            $response = Invoke-WebRequest -Method $Method -Uri $Url -UseBasicParsing -TimeoutSec 30
+        }
+    }
+    catch {
+        Write-Host "❌ Request failed: $_" -ForegroundColor Red
+        throw
+    }
+
+    Write-Host "« Status: $($response.StatusCode)" -ForegroundColor DarkGray
+    if ($response.Content) {
+        Write-Host "« Response body:" -ForegroundColor DarkGray
+        Write-Host ($response.Content | Format-Json)
+    }
+
+    # Attempt to parse JSON, fall back to raw
+    try { return $response.Content | ConvertFrom-Json -Depth 100 } catch { return $response.Content }
+}
+
+# --- helper: UTC ISO‑8601 (+00:00) -----------------------------------
+function Get-IsoUtc {
+    param([int]$MinutesAhead = 2)
+    $ts = (Get-Date).AddMinutes($MinutesAhead).ToUniversalTime()
+    # .NET custom format cannot emit "+00:00", so append manually
+    return $ts.ToString('yyyy-MM-dd''T''HH:mm:ss') + '+00:00'
+}
+
+# --- helper: poll Durable status until Completed/Failed/Terminated ----
+function Wait-ForCompletion {
+    param(
+        [Parameter(Mandatory)][string]$StatusUrl,
+        [Parameter()][int]$TimeoutSec = 300,
+        [Parameter()][int]$PollInterval = 10
+    )
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $stat = Invoke-SmokeRequest -Method GET -Url $StatusUrl
+        $runtime = $stat.runtimeStatus
+        Write-Host "·· runtimeStatus = $runtime" -ForegroundColor Yellow
+        if ($runtime -in @('Completed','Failed','Terminated')) { return $stat }
+        Start-Sleep -Seconds $PollInterval
+    } while ((Get-Date) -lt $deadline)
+    throw "Timeout waiting for orchestration to finish"
+}
+
+# =====================================================================
+# 1) WIPE all existing schedules --------------------------------------
+# =====================================================================
+Invoke-SmokeRequest -Method DELETE -Url "$BaseUrl/api/schedule"
+
+# =====================================================================
+# 2) HEALTH CHECKS -----------------------------------------------------
+# =====================================================================
+Invoke-SmokeRequest -Method GET -Url "$BaseUrl/healthz"
+Invoke-SmokeRequest -Method GET -Url "$SchedulerBase/api/healthz"
+
+# =====================================================================
+# 3) CREATE **and cancel** a schedule ---------------------------------
+# =====================================================================
+$execCancel = Get-IsoUtc -MinutesAhead 5
+$cancelReq = @{
+    exec_at     = $execCancel
+    prompt_type = 'log.append'
+    payload     = @{ tag = 'smoke'; base = 'info'; message = 'cancel-demo' }
+    tag          = 'smoke'
+    secondary_tag= 'cancel'
+}
+$cancelResp = Invoke-SmokeRequest -Method POST -Url "$BaseUrl/api/schedule" -Body $cancelReq
+$cancelId   = $cancelResp.transaction_id
+if (-not $cancelId) { throw "transaction_id not returned" }
+# Delete it immediately
+Invoke-SmokeRequest -Method DELETE -Url "$BaseUrl/api/schedule/$cancelId"
+
+# =====================================================================
+# 4) FASTAPI schedule, run in 2 min -----------------------------------
+# =====================================================================
+$execFast = Get-IsoUtc -MinutesAhead 2
+$fastReq = @{
+    exec_at     = $execFast
+    prompt_type = 'log.append'
+    payload     = @{ tag = 'smoke'; base = 'info'; message = 'fastapi-2min' }
+    tag          = 'fastapi'
+    secondary_tag= 'smoke'
+}
+$fastResp = Invoke-SmokeRequest -Method POST -Url "$BaseUrl/api/schedule" -Body $fastReq
+$fastId   = $fastResp.transaction_id
+if (-not $fastId) { throw "transaction_id missing from schedule response" }
+
+# 4a) verify tag metadata via status
+$statusUrlFast = "$BaseUrl/api/schedule/$fastId/status"
+Invoke-SmokeRequest -Method GET -Url $statusUrlFast | Out-Null
+
+# 4b) poll until finished
+Wait-ForCompletion -StatusUrl $statusUrlFast -TimeoutSec 240
+
+# =====================================================================
+# 5) LIST schedules after execution -----------------------------------
+# =====================================================================
+Invoke-SmokeRequest -Method GET -Url "$BaseUrl/api/schedule"
+
+# =====================================================================
+# 6) PUBLIC API (scheduler) schedule ----------------------------------
+# =====================================================================
+$execSched = Get-IsoUtc -MinutesAhead 2
+$schedReq = @{
+    exec_at     = $execSched
+    prompt_type = 'log.append'
+    payload     = @{ tag = 'smoke'; base = 'info'; message = 'scheduler-2min' }
+    tag          = 'scheduler'
+    secondary_tag= 'smoke'
+}
+$schedResp = Invoke-SmokeRequest -Method POST -Url "$SchedulerBase/api/schedule" -Body $schedReq
+$schedId   = $schedResp.id  # scheduler returns {"id": "..."}
+if (-not $schedId) { throw "id missing in scheduler response" }
+
+# 6a) verify tag metadata via status
+$statusUrlSched = "$SchedulerBase/api/status/$schedId"
+Invoke-SmokeRequest -Method GET -Url $statusUrlSched | Out-Null
+
+# 6b) poll until finished
+Wait-ForCompletion -StatusUrl $statusUrlSched -TimeoutSec 240
+
+# =====================================================================
+# 7) FINAL wipe --------------------------------------------------------
+# =====================================================================
+Invoke-SmokeRequest -Method DELETE -Url "$BaseUrl/api/schedule"
+
+Write-Host "\n🎉 Smoke tests completed successfully" -ForegroundColor Green

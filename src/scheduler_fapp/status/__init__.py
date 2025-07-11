@@ -5,11 +5,12 @@ GET /api/status/{instanceId}
 Returns the full Durable-Functions orchestration status **with history** so
 we can diagnose timer issues, race conditions, etc.
 
-July 2025 · r2  
+July 2025 · r3  
 ────────────────
-• Exposes `tag`, `secondary_tag`, and `tertiary_tag` at the top level of
-  the JSON response (duplicated from the orchestration input) so that
-  clients do not need to parse the nested `input` object.
+• FIX: correctly treat `DurableOrchestrationStatus.to_json()` output as a
+  JSON **string**, then `json.loads` it to a dict before further access.
+• Still surfaces `tag`, `secondary_tag`, and `tertiary_tag` at the top
+  level of the payload for easy client filtering.
 """
 from __future__ import annotations
 
@@ -50,10 +51,10 @@ async def main(                       # HTTP GET  /api/status/{instanceId}
                 mimetype="application/json",
             )
 
-        # serialise DurableOrchestrationStatus to dict
-        data = status.to_json()
+        # NOTE: to_json() → *string*, must be parsed back to dict
+        data = json.loads(status.to_json())
 
-        # ── NEW: surface tag metadata at top level ────────────────────────
+        # ── Surface tag metadata at top level ──────────────────────────────
         orchestration_input = data.get("input") or {}
         for key in ("tag", "secondary_tag", "tertiary_tag"):
             if key in orchestration_input:
