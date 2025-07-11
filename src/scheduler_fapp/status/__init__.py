@@ -1,16 +1,15 @@
-# ── src/scheduler_fapp/status/__init__.py ─────────────────────────────
+# ── src/scheduler_fapp/status/__init__.py ────────────────────────────
 """
 GET /api/status/{instanceId}
 
-Returns the full Durable-Functions orchestration status **with history** so
-we can diagnose timer issues, race conditions, etc.
+Returns the full Durable-Functions orchestration status **with history**
+so we can diagnose timer issues, race conditions, etc.
 
-July 2025 · r3  
+July 2025 · r4  
 ────────────────
-• FIX: correctly treat `DurableOrchestrationStatus.to_json()` output as a
-  JSON **string**, then `json.loads` it to a dict before further access.
-• Still surfaces `tag`, `secondary_tag`, and `tertiary_tag` at the top
-  level of the payload for easy client filtering.
+FIX: `DurableOrchestrationStatus.to_json()` already returns a *dict* in
+azure-functions-durable ≥ 1.3.x.  
+Guard against both old (string) and new (dict) behaviours.
 """
 from __future__ import annotations
 
@@ -51,8 +50,9 @@ async def main(                       # HTTP GET  /api/status/{instanceId}
                 mimetype="application/json",
             )
 
-        # NOTE: to_json() → *string*, must be parsed back to dict
-        data = json.loads(status.to_json())
+        # azure-functions-durable ≥ 1.3.x → dict | ≤ 1.2.x → str
+        raw = status.to_json()
+        data = raw if isinstance(raw, dict) else json.loads(raw)
 
         # ── Surface tag metadata at top level ──────────────────────────────
         orchestration_input = data.get("input") or {}
