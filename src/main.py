@@ -22,7 +22,8 @@ from routers.jsondata.endpoints            import router as jsondata_router
 from routers.jsondata.html_endpoints       import router as html_json_router
 from routers.log.endpoints                 import router as log_router
 from routers.log.html_console_endpoint     import router as log_console_router
-from routers.schedule.endpoints            import router as schedule_router            # ← NEW
+from routers.schedule.endpoints            import router as schedule_router          # ← NEW
+from routers.lcsd.lcsd_af_info             import router as lcsd_af_info_router      # ← NEW
 
 # ── include routes ----------------------------------------------------
 app.include_router(hello_router)
@@ -32,6 +33,7 @@ app.include_router(html_json_router)
 app.include_router(log_router)
 app.include_router(log_console_router)
 app.include_router(schedule_router)          # ← NEW
+app.include_router(lcsd_af_info_router)      # ← NEW
 
 # ── root --------------------------------------------------------------
 @app.get("/", include_in_schema=False)
@@ -40,6 +42,6 @@ def root():
         "status": "ok",
         "info": (
             "/api/hello, /healthz, /api/json/*, /api/log, /api/log/console/, "
-            "/api/schedule (POST|DELETE)"
+            "/api/schedule (POST|DELETE), /api/lcsd/lcsd_af_info"
         ),
     }
