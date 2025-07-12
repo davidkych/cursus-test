@@ -1,20 +1,17 @@
-# ── src/routers/lcsd/endpoints.py ─────────────────────────────────────────
+# ── src/routers/lcsd/endpoints.py ────────────────────────────────────────────
 """
-Aggregator for LCSD sub-routers.
+Aggregator for all LCSD sub-routers.
 
-• Keeps the public export `router` expected by main.py
-• Includes individual endpoint modules so multiple endpoints can
-  coexist without cluttering one file.
+Add further sub-routers here so they are automatically exposed by main.py.
 """
 
 from fastapi import APIRouter
 
-# Import each endpoint module’s router here
-from .lcsd_af_info import router as _af_info_router
-from .lcsd_af_timetable_probe import router as _af_timetable_router  # ← NEW
+# ⬇ existing endpoint(s)
+from .lcsd_af_info               import router as _af_info_router
+# ⬇ NEW jogging-timetable endpoint
+from .lcsd_af_timetable_endpoint import router as _af_tt_router
 
 router = APIRouter()
-router.include_router(_af_info_router)
-router.include_router(_af_timetable_router)  # ← NEW
-
-# Add future sub-routers with `router.include_router(<router>)` here.
+router.include_router(_af_info_router)   # /api/lcsd/lcsd_af_info
+router.include_router(_af_tt_router)     # /api/lcsd/lcsd_af_timetable_probe
