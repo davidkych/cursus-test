@@ -17,13 +17,21 @@ Workflow
         secondary_tag  = 'af_excel_timetable'
         tertiary_tag   = <lcsd_number>
         year/month/day = date when this endpoint runs
+
+4.  **NEW (2025-07-13)** – After completing its own work this endpoint now
+    *fire-and-forgets* a POST to
+        `/api/lcsd/lcsd_cleanup_validator_scheduler`
+    to trigger automatic clean-up & re-validation.  Any error is silently
+    swallowed; the primary response payload is unchanged.
 """
 from __future__ import annotations
 
+import os
 from datetime import datetime, date
 from typing import List, Dict
 from zoneinfo import ZoneInfo
 
+import requests                                  # ← NEW
 from fastapi import APIRouter, HTTPException, Query
 from azure.cosmos import exceptions as cosmos_exc
 
@@ -100,6 +108,20 @@ def _save_record(payload: Dict, today: date) -> None:
     )
 
 
+def _internal_base() -> str:
+    """
+    Resolve the FastAPI base-URL without hard-coding, mirroring logic used
+    elsewhere in the code-base.
+    """
+    if (base := os.getenv("WEBAPP_BASE_URL")):
+        return base.rstrip("/")
+    if (site := os.getenv("FASTAPI_SITE_NAME")):
+        return f"https://{site}.azurewebsites.net"
+    if (site := os.getenv("WEBAPP_SITE_NAME") or os.getenv("WEBSITE_SITE_NAME")):
+        return f"https://{site}.azurewebsites.net"
+    return "http://localhost:8000"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # FastAPI route
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,12 +131,12 @@ def _save_record(payload: Dict, today: date) -> None:
     summary="Harvest LCSD jogging timetables (Excel) and save to Cosmos DB",
 )
 def lcsd_af_excel_timetable(
-    timeout: int = Query(15, ge=5, le=60, description="Per-download timeout (s)"),
-    debug:   bool = Query(False, description="Verbose stdout logging"),
+    timeout: int = Query(15, ge=5,  le=60, description="Per-download timeout (s)"),
+    debug:   bool = Query(False,      description="Verbose stdout logging"),
 ) -> Dict:
     """
     Trigger Excel download / parse for all facilities discovered by the latest
-    *avail-timetable* probe.
+    *avail-timetable* probe, then kick off the clean-up validator scheduler.
     """
     try:
         avail_data = _load_latest_avail_json()
@@ -162,10 +184,23 @@ def lcsd_af_excel_timetable(
                 _save_record(payload, today)
                 saved += 1
 
-    return {
+    # ── build response first ────────────────────────────────────────────────
+    resp = {
         "status":        "success",
         "timestamp_hkt": datetime.now(ZoneInfo("Asia/Hong_Kong"))
                              .isoformat(timespec="seconds"),
         "docs_saved":    saved,
         "docs_skipped":  skipped,
     }
+
+    # ── NEW: fire-and-forget clean-up/validator scheduler ───────────────────
+    try:
+        requests.post(
+            f"{_internal_base()}/api/lcsd/lcsd_cleanup_validator_scheduler",
+            timeout=5,
+        )
+    except Exception:
+        # non-blocking by design – swallow any error
+        pass
+
+    return resp
