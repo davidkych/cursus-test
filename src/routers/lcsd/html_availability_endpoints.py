@@ -1,42 +1,40 @@
-# ── src/routers/lcsd/html_availability_endpoints.py ──────────────────
+# ── src/routers/lcsd/html_availability_endpoints.py ─────────────────────────
 """
 HTML helpers for /api/lcsd/availability
 
-Upgrade #2 (2025-06-22)  
-───────────────────────  
-• Radio switch decides **Time** vs **Period** unequivocally: only the active  
-  field keeps a *name* attribute, so the server never receives both.  
-• Period mode shows two time pickers whose defaults are the current HK time.  
+UI and behaviour are identical to the legacy implementation; the only
+difference is that the generated form now targets the **new** JSON API
+provided by *availability_endpoints.py* at `/api/lcsd/availability`.
 """
+
+from __future__ import annotations
 
 import datetime
 from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 router = APIRouter()
+
 _HK_TZ = ZoneInfo("Asia/Hong_Kong")
+_now = datetime.datetime.now(datetime.timezone.utc).astimezone(_HK_TZ)
+_now_hms = _now.strftime("%H:%M:%S")
+_today = _now.date().isoformat()
 
-
-def _build_form() -> str:
-    now = datetime.datetime.now(datetime.timezone.utc).astimezone(_HK_TZ)
-    now_hms = now.strftime("%H:%M:%S")
-    today   = now.date().isoformat()
-
-    # ⬇︎ f-string ⇒ CSS / JS braces need doubling {{ }}
-    return f"""
+_FORM = f"""
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LCSD Availability Checker</title>
-<style>
-  body   {{ font-family:sans-serif; max-width:540px; margin:2rem auto; }}
-  label  {{ display:block; margin-bottom:.8rem; }}
-  .hide  {{ display:none; }}
-  .inline{{ display:inline-block; vertical-align:middle; }}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LCSD Availability Checker</title>
+  <style>
+    body   {{ font-family:sans-serif; max-width:540px; margin:2rem auto; }}
+    label  {{ display:block; margin-bottom:.8rem; }}
+    .hide  {{ display:none; }}
+    .inline{{ display:inline-block; vertical-align:middle; }}
+  </style>
 </head>
 <body>
 <h2>LCSD Athletic-Field Availability</h2>
@@ -49,10 +47,10 @@ def _build_form() -> str:
 
   <label>
     Date (YYYY-MM-DD):<br>
-    <input type="date" name="date" value="{today}" required>
+    <input type="date" name="date" value="{_today}" required>
   </label>
 
-  <!-- ── query-mode toggle ───────────────────────────────────────── -->
+  <!-- ── query-mode toggle ────────────────────────────────────────── -->
   <fieldset style="margin-bottom:.8rem;">
     <legend style="font-weight:bold;">Query mode</legend>
     <label class="inline"><input type="radio" name="mode" value="time"   checked> Time (single)</label>
@@ -60,22 +58,22 @@ def _build_form() -> str:
     <label class="inline"><input type="radio" name="mode" value="period"> Period (range)</label>
   </fieldset>
 
-  <!-- ── point-in-time input ─────────────────────────────────────── -->
+  <!-- ── point-in-time input ──────────────────────────────────────── -->
   <div id="timeGroup">
     <label>
       Time (HH:MM:SS):<br>
       <input type="time" id="timeInput" name="time" step="1"
-             value="{now_hms}" required>
+             value="{_now_hms}" required>
     </label>
   </div>
 
-  <!-- ── period input ─────────────────────────────────────────────── -->
+  <!-- ── period input ──────────────────────────────────────────────── -->
   <div id="periodGroup" class="hide">
     <label>
       Period (same day):<br>
-      <input type="time" id="startTime" step="1"  class="inline" style="width:120px;" value="{now_hms}">
+      <input type="time" id="startTime" step="1"  class="inline" style="width:120px;" value="{_now_hms}">
       <span class="inline"> – </span>
-      <input type="time" id="endTime"   step="1"  class="inline" style="width:120px;" value="{now_hms}">
+      <input type="time" id="endTime"   step="1"  class="inline" style="width:120px;" value="{_now_hms}">
     </label>
     <input type="hidden" id="periodHidden" value="">
   </div>
@@ -134,12 +132,11 @@ form.addEventListener("submit", e => {{
 </html>
 """
 
-
 @router.get(
     "/api/lcsd/availability/html",
     include_in_schema=False,
     response_class=HTMLResponse,
 )
-def availability_form(_: Request) -> HTMLResponse:      # noqa: D401
-    """Serve interactive browser form for the availability endpoint."""
-    return HTMLResponse(_build_form())
+def availability_form(request: Request) -> HTMLResponse:  # noqa: D401 – FastAPI signature
+    """Serve the interactive browser form for the availability endpoint."""
+    return HTMLResponse(_FORM)
