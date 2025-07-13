@@ -14,6 +14,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   location: location
   kind:     'GlobalDocumentDB'
   properties: {
+    // ── existing settings ────────────────────────────────────────────────
     databaseAccountOfferType: 'Standard'
     locations: [
       {
@@ -21,6 +22,9 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
         failoverPriority: 0
       }
     ]
+
+    // ── NEW: enable data-plane RBAC so the Web-App’s MSI can access Cosmos ──
+    isRoleBasedAccessControlEnabled: true
   }
 }
 
