@@ -1,15 +1,14 @@
-# ── src/routers/lcsd/html_availability_endpoints.py ────────────────────────
+# ── src/routers/lcsd/html_availability_endpoints.py ──────────────────
 """
-Interactive HTML helper for **/api/lcsd/availability**
+HTML helpers for /api/lcsd/availability
 
-The UI and behaviour mirror the legacy implementation; the only change is that
-it now lives in the modern code-base and relies on the new
-`availability_endpoints.py` FastAPI handler already exposed at
-    /api/lcsd/availability            (GET | POST)
+Upgrade #2 (2025-06-22) logic retained – radio switch decides **Time** vs
+**Period** unequivocally (only the active field has a *name* attribute).
 
-Route exposed by this file
-    /api/lcsd/availability/html       (GET  → HTML form)
+🚀 This version targets the new availability endpoint inside the updated
+system and is *visible* in the OpenAPI schema.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -20,12 +19,13 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter()
 
-# ── default date / time pre-filled with current Hong Kong time ──────────────
-_HK_TZ = ZoneInfo("Asia/Hong_Kong")
-_now   = datetime.datetime.now(datetime.timezone.utc).astimezone(_HK_TZ)
-_now_hms = _now.strftime("%H:%M:%S")
-_today   = _now.date().isoformat()
+# ── default HK date / time ────────────────────────────────────────────
+_HK_TZ     = ZoneInfo("Asia/Hong_Kong")
+_now       = datetime.datetime.now(datetime.timezone.utc).astimezone(_HK_TZ)
+_now_hms   = _now.strftime("%H:%M:%S")
+_today_iso = _now.date().isoformat()
 
+# ── static HTML form ──
 _FORM_HTML = f"""
 <!doctype html>
 <html lang="en">
@@ -45,16 +45,16 @@ _FORM_HTML = f"""
 
 <form id="availForm" method="get" action="/api/lcsd/availability">
   <label>
-    LCSD ID:<br>
+    LCSD&nbsp;ID:<br>
     <input type="text" name="lcsdid" required>
   </label>
 
   <label>
     Date (YYYY-MM-DD):<br>
-    <input type="date" name="date" value="{_today}" required>
+    <input type="date" name="date" value="{_today_iso}" required>
   </label>
 
-  <!-- ── query-mode toggle ─────────────────────────────────────────────── -->
+  <!-- ── query-mode toggle ─────────────────────────────────────────── -->
   <fieldset style="margin-bottom:.8rem;">
     <legend style="font-weight:bold;">Query mode</legend>
     <label class="inline"><input type="radio" name="mode" value="time"   checked> Time (single)</label>
@@ -62,7 +62,7 @@ _FORM_HTML = f"""
     <label class="inline"><input type="radio" name="mode" value="period"> Period (range)</label>
   </fieldset>
 
-  <!-- ── point-in-time input ───────────────────────────────────────────── -->
+  <!-- ── point-in-time input ───────────────────────────────────────── -->
   <div id="timeGroup">
     <label>
       Time (HH:MM:SS):<br>
@@ -71,13 +71,13 @@ _FORM_HTML = f"""
     </label>
   </div>
 
-  <!-- ── period input ──────────────────────────────────────────────────── -->
+  <!-- ── period input ──────────────────────────────────────────────── -->
   <div id="periodGroup" class="hide">
     <label>
       Period (same day):<br>
-      <input type="time" id="startTime" step="1" class="inline" style="width:120px;" value="{_now_hms}">
+      <input type="time" id="startTime" step="1"  class="inline" style="width:120px;" value="{_now_hms}">
       <span class="inline"> – </span>
-      <input type="time" id="endTime"   step="1" class="inline" style="width:120px;" value="{_now_hms}">
+      <input type="time" id="endTime"   step="1"  class="inline" style="width:120px;" value="{_now_hms}">
     </label>
     <input type="hidden" id="periodHidden" value="">
   </div>
@@ -136,12 +136,12 @@ form.addEventListener("submit", e => {{
 </html>
 """
 
-# ── FastAPI route ───────────────────────────────────────────────────────────
+# ── FastAPI route (visible in schema) ─────────────────────────────────
 @router.get(
     "/api/lcsd/availability/html",
-    include_in_schema=False,
     response_class=HTMLResponse,
+    summary="Interactive HTML form for /api/lcsd/availability",
 )
-def availability_form(request: Request) -> HTMLResponse:  # noqa: D401
-    """Serve the interactive availability checker form."""
+def availability_form(request: Request) -> HTMLResponse:
+    """Serve the interactive browser form for the availability endpoint."""
     return HTMLResponse(_FORM_HTML)
