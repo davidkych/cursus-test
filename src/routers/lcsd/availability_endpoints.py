@@ -1,56 +1,55 @@
+# ── src/routers/lcsd/availability_endpoints.py ───────────────────────────────
 """
-LCSD jogging-lane **availability** checker – /api/lcsd/availability
+LCSD jogging-lane **availability** checker  –  /api/lcsd/availability
 
-Refactor 3 (2025-07-13)
-───────────────────────
-Same public contract as the legacy endpoint, **but** it now reads an
-*Excel-timetable* JSON that lives as **one document per facility**
+*Refactor 3 — 2025-07-13*
+
+The query semantics (point-in-time & same-day period) are identical to the
+legacy implementation, but the timetable source has moved:
 
     tag            = 'lcsd'
     secondary_tag  = 'af_excel_timetable'
-    tertiary_tag   = <lcsdid>
-    year/month     = request date
-    day            = **latest** in that month
+    tertiary_tag   = <lcsd_number>   (≘ request.lcsdid)
+    year/month/day = HKT date when the Excel parser ran
 
-Document schema (see lcsd_af_excel_timetable.py) ⟶
-    {
-      "did_number": …,
-      "lcsd_number": …,
-      "name": …,
-      "timetable": { "YYYY-MM-DD":[{start,end,status},…] },
-      "legend_map": { "A":"Available", … }
-    }
-
-All other behaviours (period query, legends, HK-only date checks, etc.)
-remain identical to the 2025-06-21 endpoint.
+The endpoint now fetches **the document with the latest *day* value** for the
+requested month and LCSD-ID and answers against its ``timetable`` mapping.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
-import re as _re
+import os
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 from zoneinfo import ZoneInfo
-from azure.cosmos import exceptions as _cosmos_exc
 
-# ── shared Cosmos container (partition-key = 'lcsd') ─────────────────────────
-from routers.jsondata.endpoints import _container                                         # type: ignore
+from azure.cosmos import exceptions as cosmos_exc
 
+# Re-use the already-configured Cosmos container from /api/json helpers
+from routers.jsondata.endpoints import _container
+
+# ── constants ────────────────────────────────────────────────────────────────
 _HK_TZ = ZoneInfo("Asia/Hong_Kong")
-_TRUE_CODES = {"A", "L", "G", "T", "F"}
+
+_TAG      = "lcsd"
+_SEC_TAG  = "af_excel_timetable"
+_TRUE_OK  = {"A", "L", "G", "T", "F"}           # letters that mean “available”
 
 # ── regex helpers ────────────────────────────────────────────────────────────
-_TIME_TBL_RE  = _re.compile(r"^\d{1,2}:\d{2}$")                       # timetable HH:MM
-_TIME_USER_RE = _re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")              # user HH:MM[:SS]
-_PERIOD_RE    = _re.compile(r"^\d{1,2}:\d{2}(:\d{2})?-\d{1,2}:\d{2}(:\d{2})?$")
+_TIME_TBL_RE  = re.compile(r"^\d{1,2}:\d{2}$")                 # timetable HH:MM
+_TIME_USER_RE = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?$")        # user HH:MM[:SS]
+_PERIOD_RE    = re.compile(r"^\d{1,2}:\d{2}(:\d{2})?-\d{1,2}:\d{2}(:\d{2})?$")
 
-# ── misc tiny helpers ────────────────────────────────────────────────────────
+# ── time helpers ─────────────────────────────────────────────────────────────
 def _now_hk() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc).astimezone(_HK_TZ)
 
 
-def _parse_timetable_hhmm(txt: str) -> _dt.time:
+def _parse_hhmm_tbl(txt: str) -> _dt.time:
     if not _TIME_TBL_RE.fullmatch(txt.strip()):
         raise ValueError(f"Bad timetable time {txt!r}")
     h, m = map(int, txt.strip().split(":"))
@@ -60,34 +59,41 @@ def _parse_timetable_hhmm(txt: str) -> _dt.time:
 def _parse_user_time(txt: str) -> _dt.time:
     if not _TIME_USER_RE.fullmatch(txt.strip()):
         raise ValueError(f"Bad time {txt!r}")
-    h, m, *rest = map(int, txt.strip().split(":"))
-    s = rest[0] if rest else 0
+    parts = list(map(int, txt.strip().split(":")))
+    h, m, s = (parts + [0, 0])[:3]
     return _dt.time(h, m, s)
 
 
-def _time_to_sec(t: _dt.time) -> int:
+def _sec(t: _dt.time) -> int:  # hh:mm[:ss] → seconds since midnight
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-# ── Cosmos helpers ───────────────────────────────────────────────────────────
-def _latest_timetable_doc(year: int, month: int, lcsdid: str) -> Optional[Dict[str, Any]]:
+def _range_to_str(st: int, en: int) -> str:
+    def _hhmmss(sec: int) -> str:
+        h, sec = divmod(sec, 3600)
+        m, s   = divmod(sec, 60)
+        return f"{h:02}:{m:02}:{s:02}"
+    return f"{_hhmmss(st)}-{_hhmmss(en)}"
+
+
+# ── Cosmos helper ────────────────────────────────────────────────────────────
+def _latest_timetable_doc(lcsdid: str, year: int, month: int) -> Optional[Dict]:
     """
-    Return `.data` of the newest (*day* DESC) timetable document for *lcsdid*
-    in *year/month*, or **None** when absent.
+    Return ``data`` field of the *latest-day* timetable document for *lcsdid*
+    in (*year*, *month*).  None → no matching document.
     """
     query = """
-        SELECT TOP 1 c.data
-        FROM   c
-        WHERE  c.tag = @tag
-          AND  c.secondary_tag = @sec
-          AND  c.tertiary_tag  = @ter
-          AND  c.year = @yr
-          AND  c.month = @mon
-        ORDER BY c.day DESC
+      SELECT c.data, c.day
+      FROM   c
+      WHERE  c.tag = @tag
+        AND  c.secondary_tag = @sec
+        AND  c.tertiary_tag = @ter
+        AND  c.year = @yr
+        AND  c.month = @mon
     """
     params = [
-        {"name": "@tag",  "value": "lcsd"},
-        {"name": "@sec",  "value": "af_excel_timetable"},
+        {"name": "@tag",  "value": _TAG},
+        {"name": "@sec",  "value": _SEC_TAG},
         {"name": "@ter",  "value": lcsdid},
         {"name": "@yr",   "value": year},
         {"name": "@mon",  "value": month},
@@ -97,196 +103,189 @@ def _latest_timetable_doc(year: int, month: int, lcsdid: str) -> Optional[Dict[s
             _container.query_items(
                 query=query,
                 parameters=params,
-                partition_key="lcsd",
+                partition_key=_TAG,                 # single-partition query
                 enable_cross_partition_query=False,
             )
         )
-    except _cosmos_exc.CosmosHttpResponseError as exc:                                     # pragma: no cover
+    except cosmos_exc.CosmosHttpResponseError as exc:
         raise HTTPException(500, f"Cosmos DB query failed: {exc.message}") from exc
-    return items[0]["data"] if items else None
+
+    if not items:
+        return None
+    # pick the document with the highest *day*
+    items.sort(key=lambda r: int(r.get("day", 0)), reverse=True)
+    return items[0]["data"]
 
 
-# ── legend cache (per request) ───────────────────────────────────────────────
-def _make_legend_cache(legend_map: Dict[str, str]):
-    cache: Dict[str, Optional[str]] = {}
-    def _legend(code: str) -> Optional[str]:
-        if code not in cache:
-            cache[code] = legend_map.get(code)
-        return cache[code]
-    return _legend
+# ── legend & interval helpers ────────────────────────────────────────────────
+def _legend_for(code: str, doc: Dict[str, Any]) -> Optional[str]:
+    return (doc.get("legend_map") or {}).get(code)
 
 
-# ── timetable helpers ───────────────────────────────────────────────────────
-def _intervals_for_date(tab: Dict[str, List[Dict[str, str]]],
-                        date_iso: str) -> List[Tuple[int, int, str]]:
+def _intervals_for_date(doc: Dict[str, Any], date_iso: str) -> List[Tuple[int, int, str]]:
     """
-    Convert one day’s timetable into a list of *(start_sec, end_sec_incl, status)*.
+    Convert timetable rows for *date_iso* into
+        [(start_sec, end_sec_inclusive, status_letter), …]  sorted ascending.
     """
-    out: List[Tuple[int, int, str]] = []
-    for itv in tab.get(date_iso, []):
+    intervals: List[Tuple[int, int, str]] = []
+    for row in doc.get("timetable", {}).get(date_iso, []):
         try:
-            st = _parse_timetable_hhmm(itv["start"])
-            en = _parse_timetable_hhmm(itv["end"])
+            st = _parse_hhmm_tbl(row["start"])
+            en = _parse_hhmm_tbl(row["end"])
         except Exception:
             continue
-        start_sec = _time_to_sec(st)
-        end_sec   = _time_to_sec(en) - 1                       # timetable *end* is exclusive
-        if end_sec >= start_sec:
-            out.append((start_sec, end_sec, str(itv["status"]).strip()))
-    return sorted(out, key=lambda x: x[0])
-
-
-def _sec_to_hhmmss(sec: int) -> str:
-    h, sec = divmod(sec, 3600)
-    m, s   = divmod(sec, 60)
-    return f"{h:02}:{m:02}:{s:02}"
-
-
-def _sec_range(st: int, en: int) -> str:
-    return f"{_sec_to_hhmmss(st)}-{_sec_to_hhmmss(en)}"
+        s_sec, e_sec = _sec(st), _sec(en) - 1      # timetable “end” is exclusive
+        if e_sec < s_sec:
+            continue
+        letter = str(row.get("status", "")).strip()
+        intervals.append((s_sec, e_sec, letter))
+    return sorted(intervals, key=lambda t: t[0])
 
 
 def _same_status(a: Dict[str, str], b: Dict[str, str]) -> bool:
-    return a["status_letter"] == b["status_letter"] and a["availability"] == b["availability"]
+    return (
+        a["status_letter"] == b["status_letter"]
+        and a["availability"] == b["availability"]
+    )
 
 
-def _segment_period(iv: List[Tuple[int, int, str]],
-                    q_start: int, q_end: int,
-                    legend_of) -> List[Dict[str, str]]:
+def _slice_period(intervals: List[Tuple[int, int, str]],
+                  q_st: int, q_en: int,
+                  legend_cb) -> List[Dict[str, str]]:
     """
-    Slice intervals by `[q_start,q_end]` and coalesce identical statuses.
+    Slice *intervals* (sorted) by [q_st, q_en] inclusive → non-overlapping
+    segments with status/legend.  Fills gaps as «closed».
     """
     segs: List[Dict[str, str]] = []
     i = 0
-    cur = q_start
-    while cur <= q_end:
-        while i < len(iv) and iv[i][1] < cur:
+    cur = q_st
+    while cur <= q_en:
+        while i < len(intervals) and intervals[i][1] < cur:
             i += 1
-        if i >= len(iv) or iv[i][0] > cur:                      # gap -> closed
-            gap_end = min(q_end, iv[i][0] - 1) if i < len(iv) else q_end
-            segs.append({
-                "time_range": _sec_range(cur, gap_end),
-                "status_letter": "closed",
-                "availability": "false",
-                "legend": "運動場關閉時間",
-            })
+        if i >= len(intervals) or intervals[i][0] > cur:
+            gap_end = min(q_en, intervals[i][0] - 1) if i < len(intervals) else q_en
+            segs.append(
+                {
+                    "time_range": _range_to_str(cur, gap_end),
+                    "status_letter": "closed",
+                    "availability": "false",
+                    "legend": "運動場關閉時間",
+                }
+            )
             cur = gap_end + 1
             continue
-
-        iv_st, iv_en, status = iv[i]
-        seg_end = min(iv_en, q_end)
-        segs.append({
-            "time_range": _sec_range(cur, seg_end),
-            "status_letter": status or None,
-            "availability": "true" if status in _TRUE_CODES else "false",
-            "legend": legend_of(status) if status else None,
-        })
+        iv_st, iv_en, status = intervals[i]
+        seg_end = min(iv_en, q_en)
+        segs.append(
+            {
+                "time_range": _range_to_str(cur, seg_end),
+                "status_letter": status if status else None,
+                "availability": "true" if status in _TRUE_OK else "false",
+                "legend": legend_cb(status) if status else None,
+            }
+        )
         cur = seg_end + 1
 
+    # merge adjacent identical segments
     merged: List[Dict[str, str]] = []
-    for s in segs:
-        if merged and _same_status(merged[-1], s):
+    for sg in segs:
+        if merged and _same_status(merged[-1], sg):
             merged[-1]["time_range"] = (
-                f"{merged[-1]['time_range'].split('-')[0]}-{s['time_range'].split('-')[1]}"
+                f"{merged[-1]['time_range'].split('-')[0]}-{sg['time_range'].split('-')[1]}"
             )
         else:
-            merged.append(s)
+            merged.append(sg)
     return merged
 
 
-# ── FastAPI plumbing ─────────────────────────────────────────────────────────
+# ── FastAPI models & router ──────────────────────────────────────────────────
+class AvailabilityRequest(BaseModel):
+    lcsdid: str = Field(..., description="LCSD facility number")
+    date:   Optional[str] = Field(None, description="YYYY-MM-DD")
+    time:   Optional[str] = Field(None, description="HH:MM[:SS] (point query)")
+    period: Optional[str] = Field(
+        None,
+        description="HH:MM[:SS]-HH:MM[:SS] (same-day range)",
+        regex=_PERIOD_RE.pattern,
+    )
+
+
 router = APIRouter()
+
+
+@router.post("/api/lcsd/availability", summary="Check LCSD availability (POST)")
+def availability_post(req: AvailabilityRequest):
+    return _handle(req.lcsdid, req.date, req.time, req.period)
 
 
 @router.get("/api/lcsd/availability", summary="Check LCSD availability (GET)")
 def availability_get(
     lcsdid: str = Query(..., description="LCSD facility number"),
-    date: Optional[str] = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
-    time: Optional[str] = Query(None, regex=r"^\d{1,2}:\d{2}(:\d{2})?$"),
+    date:   Optional[str] = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
+    time:   Optional[str] = Query(None, regex=_TIME_USER_RE.pattern),
     period: Optional[str] = Query(None, regex=_PERIOD_RE.pattern),
 ):
     return _handle(lcsdid, date, time, period)
 
 
-@router.post("/api/lcsd/availability", summary="Check LCSD availability (POST)")
-def availability_post(payload: Dict[str, Any]):
-    """
-    Body JSON identical to the legacy spec:
-        {
-          "lcsdid": "1060a",
-          "date":   "2025-07-13",
-          "time":   "18:00:00"           # XOR period
-        }
-    """
-    return _handle(
-        payload.get("lcsdid"),
-        payload.get("date"),
-        payload.get("time"),
-        payload.get("period"),
-    )
-
-
 # ── main handler ─────────────────────────────────────────────────────────────
-def _handle(lcsdid: str | None,
+def _handle(lcsdid: str,
             date_str: Optional[str],
             time_str: Optional[str],
-            period_str: Optional[str]):
-    if not lcsdid:
-        raise HTTPException(400, "Parameter *lcsdid* is required.")
+            period_str: Optional[str]) -> Dict[str, Any]:
     if time_str and period_str:
         raise HTTPException(400, "Provide either *time* or *period*, not both.")
 
-    now_hk = _now_hk()
-    date_obj = (
-        _dt.date.fromisoformat(date_str) if date_str else now_hk.date()
-    )
+    now = _now_hk()
+    date_obj = _dt.date.fromisoformat(date_str) if date_str else now.date()
     year, month = date_obj.year, date_obj.month
 
-    # only current OR next month
-    first_of_cur = now_hk.date().replace(day=1)
-    first_of_next = (first_of_cur + _dt.timedelta(days=32)).replace(day=1)
-    if (year, month) not in {(first_of_cur.year, first_of_cur.month),
-                             (first_of_next.year, first_of_next.month)}:
+    # accept only current or next month
+    first = now.date().replace(day=1)
+    nextm = (first + _dt.timedelta(days=32)).replace(day=1)
+    if (year, month) not in {(first.year, first.month), (nextm.year, nextm.month)}:
         raise HTTPException(400, "Only current or next month timetables accepted.")
 
-    doc = _latest_timetable_doc(year, month, lcsdid)
+    doc = _latest_timetable_doc(lcsdid, year, month)
     if not doc:
-        raise HTTPException(404, "Timetable not found for requested facility/month.")
+        raise HTTPException(404, "Timetable document not found.")
 
-    legend_cached = _make_legend_cache(doc.get("legend_map") or {})
-    intervals = _intervals_for_date(doc.get("timetable", {}), date_obj.isoformat())
+    legend_cb = lambda code: _legend_for(code, doc)
+    intervals = _intervals_for_date(doc, date_obj.isoformat())
+    facility_name = doc.get("name") or lcsdid
 
-    # ――― point-in-time query ――――――――――――――――――――――――――――――――――――――――――
+    # ―― point query (default) ――――――――――――――――――――――――――――――――――――――――
     if not period_str:
         time_obj = (
-            _parse_user_time(time_str) if time_str else now_hk.time().replace(microsecond=0)
+            _parse_user_time(time_str)
+            if time_str else now.time().replace(microsecond=0)
         )
-        sec = _time_to_sec(time_obj)
+        sec_val = _sec(time_obj)
         for st, en, status in intervals:
-            if st <= sec <= en:
-                avail = "true" if status in _TRUE_CODES else "false"
+            if st <= sec_val <= en:
+                availability = "true" if status in _TRUE_OK else "false"
                 return _point_resp(
-                    now_hk, doc["name"], lcsdid, date_obj, time_obj,
-                    status, avail, legend_cached(status)
+                    now, facility_name, lcsdid, date_obj, time_obj,
+                    status or "closed", availability, legend_cb(status)
                 )
-        # outside all intervals → closed
+        # outside timetable → closed
         return _point_resp(
-            now_hk, doc["name"], lcsdid, date_obj, time_obj,
+            now, facility_name, lcsdid, date_obj, time_obj,
             "closed", "false", "運動場關閉時間"
         )
 
-    # ――― period query ―――――――――――――――――――――――――――――――――――――――――――――――
+    # ―― period query ―――――――――――――――――――――――――――――――――――――――――――――――
     start_txt, end_txt = period_str.split("-", 1)
     t_start = _parse_user_time(start_txt)
     t_end   = _parse_user_time(end_txt)
     if t_start >= t_end:
         raise HTTPException(400, "period start must be earlier than end.")
+    q_start, q_end = _sec(t_start), _sec(t_end) - 1
 
-    q_start, q_end = _time_to_sec(t_start), _time_to_sec(t_end) - 1
-    segments = _segment_period(intervals, q_start, q_end, legend_cached)
+    segments = _slice_period(intervals, q_start, q_end, legend_cb)
     return {
-        "timestamp_queried": now_hk.isoformat(timespec="seconds"),
-        "facility_name": doc["name"],
+        "timestamp_queried": now.isoformat(timespec="seconds"),
+        "facility_name": facility_name,
         "requested": {
             "lcsdid": lcsdid,
             "date": date_obj.isoformat(),
@@ -296,6 +295,7 @@ def _handle(lcsdid: str | None,
     }
 
 
+# ── helper to build point-query response ────────────────────────────────────
 def _point_resp(ts: _dt.datetime, fac_name: str, lcsdid: str,
                 d_obj: _dt.date, t_obj: _dt.time,
                 status: str, avail: str, legend: Optional[str]) -> Dict[str, Any]:

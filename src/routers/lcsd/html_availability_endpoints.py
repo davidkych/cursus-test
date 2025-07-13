@@ -1,13 +1,15 @@
+# ── src/routers/lcsd/html_availability_endpoints.py ──────────────────────────
 """
-Interactive HTML helper – /api/lcsd/availability/html
+Browser helper form for /api/lcsd/availability
 
-Unchanged UI/JS, only minimal tweaks to import path &
-doc-string to match the refactored availability endpoint.
+Identical UI & behaviour to the legacy implementation; only cosmetic wording
+updated.  Served at  /api/lcsd/availability/html
 """
 from __future__ import annotations
 
 import datetime as _dt
 from zoneinfo import ZoneInfo
+
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
@@ -15,51 +17,61 @@ router = APIRouter()
 
 _HK_TZ = ZoneInfo("Asia/Hong_Kong")
 _now   = _dt.datetime.now(_dt.timezone.utc).astimezone(_HK_TZ)
+_today = _now.date().isoformat()
 _now_hms = _now.strftime("%H:%M:%S")
-_today   = _now.date().isoformat()
 
-_FORM = f"""
+_FORM_HTML = f"""
 <!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>LCSD Athletic-Field Availability</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LCSD Availability Checker</title>
 <style>
-  body{{font-family:sans-serif;max-width:540px;margin:2rem auto}}
-  label{{display:block;margin-bottom:.8rem}}
-  .hide{{display:none}}
-  .inline{{display:inline-block;vertical-align:middle}}
+  body   {{ font-family:sans-serif; max-width:540px; margin:2rem auto; }}
+  label  {{ display:block; margin-bottom:.8rem; }}
+  .hide  {{ display:none; }}
+  .inline{{ display:inline-block; vertical-align:middle; }}
 </style>
 </head>
 <body>
 <h2>LCSD Athletic-Field Availability</h2>
 
 <form id="availForm" method="get" action="/api/lcsd/availability">
-  <label>LCSD&nbsp;ID:<br><input type="text" name="lcsdid" required></label>
+  <label>
+    LCSD&nbsp;ID:<br>
+    <input type="text" name="lcsdid" required>
+  </label>
 
-  <label>Date (YYYY-MM-DD):<br>
+  <label>
+    Date (YYYY-MM-DD):<br>
     <input type="date" name="date" value="{_today}" required>
   </label>
 
+  <!-- ── query-mode toggle ─────────────────────────────────────────── -->
   <fieldset style="margin-bottom:.8rem;">
     <legend style="font-weight:bold;">Query mode</legend>
-    <label class="inline"><input type="radio" name="mode" value="time" checked> Time (single)</label>
+    <label class="inline"><input type="radio" name="mode" value="time"   checked> Time (single)</label>
     &nbsp;&nbsp;
     <label class="inline"><input type="radio" name="mode" value="period"> Period (range)</label>
   </fieldset>
 
+  <!-- ── point-in-time input ───────────────────────────────────────── -->
   <div id="timeGroup">
-    <label>Time (HH:MM:SS):<br>
-      <input type="time" id="timeInput" name="time" step="1" value="{_now_hms}" required>
+    <label>
+      Time (HH:MM:SS):<br>
+      <input type="time" id="timeInput" name="time" step="1"
+             value="{_now_hms}" required>
     </label>
   </div>
 
+  <!-- ── period input ──────────────────────────────────────────────── -->
   <div id="periodGroup" class="hide">
-    <label>Period (same day):<br>
-      <input type="time" id="startTime" step="1" class="inline" style="width:120px" value="{_now_hms}">
+    <label>
+      Period (same day):<br>
+      <input type="time" id="startTime" step="1"  class="inline" style="width:120px;" value="{_now_hms}">
       <span class="inline"> – </span>
-      <input type="time" id="endTime" step="1" class="inline" style="width:120px" value="{_now_hms}">
+      <input type="time" id="endTime"   step="1"  class="inline" style="width:120px;" value="{_now_hms}">
     </label>
     <input type="hidden" id="periodHidden" value="">
   </div>
@@ -67,11 +79,12 @@ _FORM = f"""
   <button type="submit">Check availability</button>
 </form>
 
-<p style="max-width:480px;margin-top:1.5rem">
-  Only the timetable of <em>this</em> or <em>next</em> month can be queried.
+<p style="max-width:480px;margin-top:1.5rem;">
+  Only timetables for <em>this</em> or <em>next</em> month are available.
 </p>
 
 <script>
+const form        = document.getElementById("availForm");
 const modeRadios  = document.querySelectorAll("input[name='mode']");
 const timeGroup   = document.getElementById("timeGroup");
 const periodGroup = document.getElementById("periodGroup");
@@ -84,6 +97,7 @@ function updateMode() {{
   const isTime = document.querySelector("input[name='mode']:checked").value === "time";
   timeGroup.classList.toggle("hide", !isTime);
   periodGroup.classList.toggle("hide", isTime);
+
   if (isTime) {{
     timeInput.name = "time";
     periodH.removeAttribute("name");
@@ -99,12 +113,15 @@ function updateMode() {{
 modeRadios.forEach(r => r.addEventListener("change", updateMode));
 updateMode();
 
-document.getElementById("availForm").addEventListener("submit", e => {{
-  if (document.querySelector("input[name='mode']:checked").value === "period") {{
+form.addEventListener("submit", e => {{
+  const isTime = document.querySelector("input[name='mode']:checked").value === "time";
+  if (!isTime) {{
     if (!startInput.value || !endInput.value) {{
-      alert("Please fill both start and end times."); e.preventDefault(); return;
+      alert("Please fill both start and end times.");
+      e.preventDefault();
+      return;
     }}
-    periodH.value = `${{startInput.value}}-${{endInput.value}}`;
+    periodH.value = ${{startInput.value}}-${{endInput.value}};
   }}
 }});
 </script>
@@ -112,7 +129,11 @@ document.getElementById("availForm").addEventListener("submit", e => {{
 </html>
 """
 
-@router.get("/api/lcsd/availability/html", include_in_schema=False,
-            response_class=HTMLResponse)
-def availability_form():
-    return HTMLResponse(_FORM)
+@router.get(
+    "/api/lcsd/availability/html",
+    include_in_schema=False,
+    response_class=HTMLResponse,
+)
+def availability_form() -> HTMLResponse:
+    """Serve the interactive browser form."""
+    return HTMLResponse(_FORM_HTML)
