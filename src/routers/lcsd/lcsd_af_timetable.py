@@ -1,4 +1,4 @@
-# ── src/routers/lcsd/lcsd_af_timetable_endpoint.py ───────────────────────────
+# ── src/routers/lcsd/lcsd_af_timetable.py ───────────────────────────
 """
 FastAPI endpoint that probes LCSD athletic-field pages, harvests *jogging-
 schedule* tables **without** depending on lcsd_af_timetable_probe.py and
