@@ -1,4 +1,4 @@
-# ── src/routers/lcsd/endpoints.py ────────────────────────────────────────────
+# ── src/routers/lcsd/endpoints.py ───────────────────────────────────────────
 from fastapi import APIRouter
 
 from .lcsd_af_info import router as _af_info_router
@@ -8,15 +8,18 @@ from .lcsd_af_adminupload_html import router as _admin_html_router
 from .lcsd_af_adminupload_logic import router as _admin_logic_router
 from .lcsd_cleanup_validator_scheduler import router as _cleanup_sched_router
 from .availability_endpoints import router as _availability_router
-from .html_availability_endpoints import router as _html_availability_router   # ← NEW
+from .html_availability_endpoints import router as _availability_html_router  # ← NEW
 
 router = APIRouter()
 
+# ── data-harvest & background jobs ──────────────────────────────────────────
 router.include_router(_af_info_router)
 router.include_router(_af_tt_router)
 router.include_router(_af_excel_router)
 router.include_router(_admin_html_router)
 router.include_router(_admin_logic_router)
 router.include_router(_cleanup_sched_router)
-router.include_router(_html_availability_router)  # ← NEW
+
+# ── public APIs ─────────────────────────────────────────────────────────────
 router.include_router(_availability_router)
+router.include_router(_availability_html_router)  # ← NEW
