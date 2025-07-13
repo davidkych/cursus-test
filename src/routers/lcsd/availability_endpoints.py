@@ -2,11 +2,12 @@
 """
 LCSD jogging-lane **availability** checker  —  /api/lcsd/availability
 
-Refactor 3 (2025-07-13 • af_excel_timetable backend)
-─────────────────────────────────────────────────────
-* Timetable data now lives **per facility / per month** in Cosmos DB with  
-      tag='lcsd', secondary_tag='af_excel_timetable', tertiary_tag=<lcsdid>  
-* The outward-facing API (point-in-time & period queries) is unchanged.
+Key changes (2025-07-14)
+────────────────────────
+* The public query parameter is now **lcsd_number**.  
+  – For backwards-compatibility a deprecated alias **lcsdid** is still
+    accepted but not documented.  
+* AvailabilityRequest model updated accordingly.
 """
 
 from __future__ import annotations
@@ -43,10 +44,10 @@ _client    = (CosmosClient(_ep, credential=_key)
 _container = _client.get_database_client(_db).get_container_client(_cont)
 
 
-def _latest_timetable_doc(lcsdid: str, year: int, month: int) -> Optional[Dict[str, Any]]:
+def _latest_timetable_doc(lcsd_number: str, year: int, month: int) -> Optional[Dict[str, Any]]:
     """
     Return the **data** part of the newest `af_excel_timetable` document that
-    matches (lcsdid, year, month).  Newest = highest `day`, `_ts` tie-break.
+    matches (lcsd_number, year, month).  Newest = highest `day`, `_ts` tie-break.
     """
     query = """
       SELECT c.data, c.day, c._ts
@@ -58,7 +59,7 @@ def _latest_timetable_doc(lcsdid: str, year: int, month: int) -> Optional[Dict[s
     params = [
         {"name": "@tag",  "value": _TAG},
         {"name": "@sec",  "value": _SEC_TAG},
-        {"name": "@ter",  "value": lcsdid},
+        {"name": "@ter",  "value": lcsd_number},
         {"name": "@yr",   "value": year},
         {"name": "@mon",  "value": month},
     ]
@@ -184,7 +185,7 @@ def _slice_period(intervals, q_start, q_end, legend_fn) -> List[Dict[str, str]]:
 
 # ── Pydantic model & router ──────────────────────────────────────────
 class AvailabilityRequest(BaseModel):
-    lcsdid: str
+    lcsd_number: str = Field(..., alias="lcsd_number")
     date:   Optional[str] = Field(None, description="YYYY-MM-DD")
     time:   Optional[str] = Field(None, description="HH:MM[:SS]  (point query)")
     period: Optional[str] = Field(
@@ -195,16 +196,20 @@ router = APIRouter()
 
 @router.post("/api/lcsd/availability")
 def availability_post(req: AvailabilityRequest):
-    return _handle(req.lcsdid, req.date, req.time, req.period)
+    return _handle(req.lcsd_number, req.date, req.time, req.period)
 
 @router.get("/api/lcsd/availability")
 def availability_get(
-    lcsdid: str = Query(...),
+    lcsd_number: Optional[str] = Query(None, alias="lcsd_number"),
+    lcsdid_alias: Optional[str] = Query(None, alias="lcsdid"),  # deprecated
     date:   Optional[str] = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
     time:   Optional[str] = Query(None, regex=r"^\d{1,2}:\d{2}(:\d{2})?$"),
     period: Optional[str] = Query(None, regex=_PERIOD_RE.pattern),
 ):
-    return _handle(lcsdid, date, time, period)
+    lcsdid_value = lcsd_number or lcsdid_alias
+    if not lcsdid_value:
+        raise HTTPException(400, "Query parameter 'lcsd_number' is required.")
+    return _handle(lcsdid_value, date, time, period)
 
 
 # ── main handler ─────────────────────────────────────────────────────
@@ -250,7 +255,7 @@ def _handle(lcsdid: str,
     return {
         "timestamp_queried": now.isoformat(timespec="seconds"),
         "facility_name": facility,
-        "requested": {"lcsdid": lcsdid, "date": date_obj.isoformat(), "period": period_str},
+        "requested": {"lcsd_number": lcsdid, "date": date_obj.isoformat(), "period": period_str},
         "segments": segments,
     }
 
@@ -273,7 +278,7 @@ def _build_point_resp(ts, fac_name, lcsdid, d_obj, t_obj, status, avail, legend)
         "timestamp_queried": ts.isoformat(timespec="seconds"),
         "facility_name": fac_name,
         "requested": {
-            "lcsdid": lcsdid,
+            "lcsd_number": lcsdid,
             "datetime_iso": f"{d_obj.isoformat()}T{t_obj.isoformat()}",
         },
         "status_letter": status,
