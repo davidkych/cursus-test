@@ -1,7 +1,10 @@
 # ── src/routers/jsondata/html_endpoints.py ─────────────────────────────
 from fastapi import APIRouter, HTTPException, Form, File, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
+from typing import List, Optional
+from urllib.parse import parse_qs
 import json
+
 from .endpoints import (
     _upsert,
     _item_id,
@@ -61,7 +64,7 @@ async def upload_form_post(
                        quaternary_tag, quinary_tag, year, month, day)
     }
 
-# ── 2. HTML list table --------------------------------------------------
+# ── 2. HTML list table with bulk‐delete -------------------------------
 @router.get("/api/json/list", summary="List all JSON items", response_class=HTMLResponse)
 def list_json_items():
     query = """
@@ -85,13 +88,16 @@ def list_json_items():
 <body>
   <h2>Uploaded JSON Items</h2>
   <a href="/api/json/upload">Upload new JSON</a><br/><br/>
+  <form method="post" action="/api/json/delete-multiple">
   <table border="1" cellpadding="5" cellspacing="0">
     <tr>
+      <th>Select</th>
       <th>Tag</th><th>Secondary</th><th>Tertiary</th><th>Quaternary</th><th>Quinary</th>
       <th>Year</th><th>Month</th><th>Day</th>
-      <th>Download</th><th>Delete</th>
+      <th>Download</th>
     </tr>
 """
+
     for item in items:
         tag  = item.get("tag", "")
         sec  = item.get("secondary_tag", "")
@@ -114,16 +120,50 @@ def list_json_items():
         qs = "&".join(params)
         html += (
             f"<tr>"
+            f"<td><input type=\"checkbox\" name=\"selected\" value=\"{qs}\"></td>"
             f"<td>{tag}</td><td>{sec}</td><td>{ter}</td><td>{qua}</td><td>{qui}</td>"
             f"<td>{yr or ''}</td><td>{mo or ''}</td><td>{dy or ''}</td>"
             f"<td><a href=\"/api/json/download?{qs}\">Download</a></td>"
-            f"<td><a href=\"/api/json/delete?{qs}\">Delete</a></td>"
             f"</tr>\n"
         )
 
     html += """
   </table>
+  <br>
+  <button type="submit">Delete Selected</button>
+  </form>
 </body>
 </html>
 """
     return HTMLResponse(html)
+
+# ── 3. Bulk‐delete endpoint ------------------------------------------------
+@router.post("/api/json/delete-multiple", include_in_schema=False)
+def delete_multiple_json(selected: List[str] = Form(...)):
+    for qs in selected:
+        params = parse_qs(qs)
+        tag  = params.get("tag", [""])[0]
+        secondary_tag = params.get("secondary_tag", [None])[0]
+        tertiary_tag  = params.get("tertiary_tag", [None])[0]
+        quaternary_tag= params.get("quaternary_tag", [None])[0]
+        quinary_tag   = params.get("quinary_tag", [None])[0]
+        year_val      = params.get("year", [None])[0]
+        month_val     = params.get("month", [None])[0]
+        day_val       = params.get("day", [None])[0]
+
+        year  = int(year_val)  if year_val  is not None else None
+        month = int(month_val) if month_val is not None else None
+        day   = int(day_val)   if day_val   is not None else None
+
+        try:
+            _container.delete_item(
+                item=_item_id(tag, secondary_tag, tertiary_tag,
+                              quaternary_tag, quinary_tag, year, month, day),
+                partition_key=tag
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            # skip if already gone
+            continue
+
+    # redirect back to the list view
+    return RedirectResponse(url="/api/json/list", status_code=303)
