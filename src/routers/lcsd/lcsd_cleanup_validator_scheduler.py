@@ -1,101 +1,106 @@
-# ── src/routers/lcsd/lcsd_cleanup_validator_scheduler.py ──────────────
 """
-Public endpoint
+lcsd_cleanup_validator_scheduler.py
+===================================
+
+Public route
     /api/lcsd/lcsd_cleanup_validator_scheduler   (GET | POST)
 
-Combined **validator + scheduler** helper.
+A self-contained variant of *lcsd_cleanup_validator.py* that
 
-•  Runs the same duplicate-cleanup / validation logic as
-   *lcsd_cleanup_validator.py* for **both** the current month and the
-   *next* month (HKT), fully in-lined – no import from the original file.
+  • validates **this** and **next** month’s Excel-timetable documents  
+  • triggers a fresh `/api/lcsd/lcsd_af_timetable_probe` run when
+    the *current* month validation fails  
+  • cleans up any *previous* schedules raised by itself, then creates
+    a new *lcsd.timetable_probe* job according to the rules in the
+    user story (see doc-string in parent ticket)
 
-•  If *this-month* validation fails, it triggers the LCSD timetable probe
-   endpoint **immediately**.
-
-•  It then wipes **all** schedules that *this* helper has previously
-   created (tag = lcsd, secondary_tag = cleanup_validator_scheduler) and
-   finally creates **one** fresh schedule that fires a
-   `lcsd.timetable_probe` job at a future time determined by the rules
-   in the user story (D1 – D3).
-
-All significant actions are logged via `/api/log`.
+All Cosmos, log-API and scheduler interactions use the existing
+internal helpers/endpoints – **no external imports** from the older
+cleanup module.
 """
 from __future__ import annotations
 
 import calendar
-from datetime import date, datetime, time as _time, timedelta, timezone
-from typing import Dict, List, Optional
-from zoneinfo import ZoneInfo
 import os
+from datetime import date, datetime, timedelta, timezone
+from typing import Dict, List, Tuple
+from zoneinfo import ZoneInfo
+
 import requests
 from fastapi import APIRouter, HTTPException
 from azure.cosmos import exceptions as cosmos_exc
 
-# Re-use the Cosmos helpers already wired up by /api/json
-from routers.jsondata.endpoints import _container  # type: ignore
-
-# ───────────────────────────────────────────────────────────────────────
-# Configuration
-# ───────────────────────────────────────────────────────────────────────
-_TZ_HKT = ZoneInfo("Asia/Hong_Kong")
-_LOG_PAYLOAD_BASE = {
-    "tag":          "lcsd",
-    "tertiary_tag": "cleanup_validator",
-    "base":         "[info]",
-}
-
-_TAG_VAL      = "lcsd"
-_SEC_TT       = "af_excel_timetable"
-_SCHED_TAG    = "lcsd"
-_SCHED_SECOND = "cleanup_validator_scheduler"
-
-_HTTP_TIMEOUT = 15  # seconds
+# ── shared Cosmos & log helpers ──────────────────────────────────────
+from routers.jsondata.endpoints import _container
+from routers.log.endpoints import append_log, LogPayload
 
 router = APIRouter()
 
+_HKT = ZoneInfo("Asia/Hong_Kong")
+_MIN_DOCS = 20            # validation threshold
+_TAG = "lcsd"
+_SEC_TAG = "af_excel_timetable"
+_SCHED_SEC_TAG = "cleanup_validator_scheduler"
 
-# ───────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────
+# Logging helper – always pushes to `/api/log`
+# ─────────────────────────────────────────────────────────────────────
+def _log(msg: str) -> None:
+    payload = LogPayload(
+        tag=_TAG,
+        tertiary_tag=_SCHED_SEC_TAG,
+        base="info",
+        message=msg,
+    )
+    append_log(payload)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Small helpers
-# ───────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+def _today_hkt() -> date:
+    return datetime.now(_HKT).date()
+
+
 def _internal_base() -> str:
-    """Derive the *public* base-URL of the FastAPI app."""
+    """Resolve the FastAPI base-URL the same way *scheduler_fapp.utils* does."""
     if (base := os.getenv("WEBAPP_BASE_URL")):
         return base.rstrip("/")
-    if (site := os.getenv("WEBSITE_SITE_NAME")):
+    if (site := os.getenv("FASTAPI_SITE_NAME")):
+        return f"https://{site}.azurewebsites.net"
+    if (site := os.getenv("WEBAPP_SITE_NAME") or os.getenv("WEBSITE_SITE_NAME")):
         return f"https://{site}.azurewebsites.net"
     return "http://localhost:8000"
 
 
-def _log(message: str) -> None:
-    """Fire-and-forget wrapper around /api/log."""
-    try:
-        requests.post(
-            f"{_internal_base()}/api/log",
-            json={**_LOG_PAYLOAD_BASE, "message": message},
-            timeout=_HTTP_TIMEOUT,
-        )
-    except Exception:  # noqa: BLE001 – logging must never break the flow
-        pass
+def _month_after(yy: int, mm: int) -> Tuple[int, int]:
+    return (yy + (mm == 12), 1 if mm == 12 else mm + 1)
 
 
-def _cleanup_month(yr: int, mon: int, ref_day: int) -> Dict:
+# ─────────────────────────────────────────────────────────────────────
+# Core clean-up & validation logic (independent, no imports)
+# ─────────────────────────────────────────────────────────────────────
+def _process_month(year: int, month: int, anchor_day: int) -> Tuple[int, int, bool]:
     """
-    Duplicate clean-up & validation for one specific year / month.
-    Returns a dict with detailed stats.
+    For (*year*, *month*) – load all timetable docs, keep **one** per
+    `tertiary_tag` closest to *anchor_day*, delete the rest, return
+
+        (total_loaded, deleted, validation_passed_bool)
     """
     query = """
         SELECT c.id, c.tertiary_tag, c.day
         FROM   c
         WHERE  c.tag = @tag
           AND  c.secondary_tag = @sec
-          AND  c.year  = @yr
+          AND  c.year = @yr
           AND  c.month = @mon
     """
     params = [
-        {"name": "@tag", "value": _TAG_VAL},
-        {"name": "@sec", "value": _SEC_TT},
-        {"name": "@yr",  "value": yr},
-        {"name": "@mon", "value": mon},
+        {"name": "@tag", "value": _TAG},
+        {"name": "@sec", "value": _SEC_TAG},
+        {"name": "@yr",  "value": year},
+        {"name": "@mon", "value": month},
     ]
 
     try:
@@ -103,20 +108,16 @@ def _cleanup_month(yr: int, mon: int, ref_day: int) -> Dict:
             _container.query_items(
                 query=query,
                 parameters=params,
-                partition_key=_TAG_VAL,
+                partition_key=_TAG,
                 enable_cross_partition_query=False,
             )
         )
     except cosmos_exc.CosmosHttpResponseError as exc:
         raise HTTPException(
-            status_code=500,
-            detail=f"Cosmos DB query failed: {exc.message}",
+            status_code=500, detail=f"Cosmos DB query failed: {exc.message}"
         ) from exc
 
     total_loaded = len(items)
-    _log(f"[{yr}-{mon:02d}] loaded {total_loaded} timetable docs")
-
-    # group by tertiary_tag (LCSD number); keep doc nearest *ref_day*
     groups: Dict[str, List[Dict]] = {}
     for itm in items:
         key = itm.get("tertiary_tag")
@@ -128,169 +129,172 @@ def _cleanup_month(yr: int, mon: int, ref_day: int) -> Dict:
         if len(docs) <= 1:
             continue
 
-        # distance metric: abs(day – ref_day); tie-break → larger day (more recent)
-        docs.sort(key=lambda d: (abs(int(d.get("day", 1)) - ref_day), -int(d.get("day", 1))))
+        # choose the **one** closest to anchor_day (tie-breaker → newer)
+        def _metric(d):
+            day_val = int(d.get("day", 1))
+            return abs(day_val - anchor_day), -day_val
+
+        docs.sort(key=_metric)
         keep_id = docs[0]["id"]
 
         for doc in docs[1:]:
             try:
-                _container.delete_item(item=doc["id"], partition_key=_TAG_VAL)
+                _container.delete_item(item=doc["id"], partition_key=_TAG)
                 deleted += 1
             except cosmos_exc.CosmosHttpResponseError:
-                pass  # delete failure non-fatal
+                pass  # deletion failure not fatal
 
     remaining = len(groups)
-    validation_passed = remaining >= 20
-    verdict = "passed" if validation_passed else "failed"
-    _log(f"[{yr}-{mon:02d}] duplicate clean-up done → remaining {remaining} ({verdict})")
-
-    return {
-        "loaded":            total_loaded,
-        "deleted":           deleted,
-        "remaining":         remaining,
-        "validation_passed": validation_passed,
-    }
+    validation_passed = remaining >= _MIN_DOCS
+    return total_loaded, deleted, validation_passed
 
 
-def _trigger_timetable_probe() -> Optional[Dict]:
-    """POST /api/lcsd/lcsd_af_timetable_probe (fire-and-forget, but return JSON if available)."""
-    url = f"{_internal_base()}/api/lcsd/lcsd_af_timetable_probe"
-    try:
-        resp = requests.post(url, timeout=_HTTP_TIMEOUT)
-        if resp.headers.get("content-type", "").startswith("application/json"):
-            _log("Triggered lcsd_af_timetable_probe")
-            return resp.json()
-    except Exception as exc:  # noqa: BLE001
-        _log(f"[warn] timetable_probe trigger failed: {exc}")
-    return None
-
-
-def _wipe_existing_schedules() -> List[str]:
-    """Delete every schedule created by earlier runs of this helper."""
-    base = _internal_base()
+# ─────────────────────────────────────────────────────────────────────
+# Scheduler helpers
+# ─────────────────────────────────────────────────────────────────────
+def _scheduler_search() -> List[str]:
+    url = f"{_internal_base()}/api/schedule/search"
     try:
         resp = requests.get(
-            f"{base}/api/schedule/search",
-            params={"tag": _SCHED_TAG, "secondary_tag": _SCHED_SECOND},
-            timeout=_HTTP_TIMEOUT,
+            url,
+            params={
+                "tag": _TAG,
+                "secondary_tag": _SCHED_SEC_TAG,
+            },
+            timeout=15,
         )
-        ids: List[str] = resp.json().get("instance_ids", [])  # type: ignore[arg-type]
+        resp.raise_for_status()
+        return resp.json().get("instance_ids", [])
     except Exception:
-        ids = []
-
-    deleted: List[str] = []
-    for inst_id in ids:
-        try:
-            requests.delete(f"{base}/api/schedule/{inst_id}", timeout=_HTTP_TIMEOUT)
-            deleted.append(inst_id)
-        except Exception:
-            pass
-
-    if deleted:
-        _log(f"Deleted {len(deleted)} old schedule(s): {', '.join(deleted)}")
-    return deleted
+        return []
 
 
-def _days_in_month(yr: int, mon: int) -> int:
-    return calendar.monthrange(yr, mon)[1]
+def _scheduler_delete(instance_id: str) -> None:
+    url = f"{_internal_base()}/api/schedule/{instance_id}"
+    try:
+        requests.delete(url, timeout=15)
+    except Exception:
+        pass
 
 
-def _compute_next_exec(today: date) -> datetime:
-    """
-    Implement rules D1 – D3 to pick the *next* execution datetime (HKT).
-    The returned datetime is **tz-aware**.
-    """
-    yr, mon, day = today.year, today.month, today.day
-    days = _days_in_month(yr, mon)
-    mid  = days // 2
-    lower_start = mid + 1
-
-    if day <= mid:
-        target = date(yr, mon, lower_start)         # D1
-    elif day == days:
-        # last day → first day of lower half of *next* month
-        next_mon = mon + 1 if mon < 12 else 1
-        next_yr  = yr + 1 if next_mon == 1 else yr
-        next_days = _days_in_month(next_yr, next_mon)
-        target = date(next_yr, next_mon, (next_days // 2) + 1)  # D2
-    else:
-        cand = today + timedelta(days=5)
-        if cand.month != mon:
-            target = date(yr, mon, days)            # month overflow → last day
-        else:
-            target = cand                           # D3
-
-    # schedule at 03:00 local time
-    dt_hkt = datetime.combine(target, _time(hour=3, minute=0), tzinfo=_TZ_HKT)
-    # ensure ≥ 60 s in the future
-    if (dt_hkt - datetime.now(_TZ_HKT)).total_seconds() < 120:  # safety cushion
-        dt_hkt += timedelta(minutes=2)
-    return dt_hkt
-
-
-def _schedule_probe(exec_dt_hkt: datetime) -> Optional[str]:
-    """Create a new *lcsd.timetable_probe* schedule – return the instance-id."""
-    body = {
-        "exec_at":       exec_dt_hkt.isoformat(timespec="seconds"),
-        "prompt_type":   "lcsd.timetable_probe",
-        "payload":       {},
-        "tag":           _SCHED_TAG,
-        "secondary_tag": _SCHED_SECOND,
+def _scheduler_create(exec_at_iso: str) -> str | None:
+    url = f"{_internal_base()}/api/schedule"
+    payload = {
+        "exec_at": exec_at_iso,
+        "prompt_type": "lcsd.timetable_probe",
+        "payload": {},
+        "tag": _TAG,
+        "secondary_tag": _SCHED_SEC_TAG,
     }
     try:
-        resp = requests.post(f"{_internal_base()}/api/schedule", json=body, timeout=_HTTP_TIMEOUT)
-        if resp.status_code in (200, 202) and resp.headers.get("content-type", "").startswith("application/json"):
-            inst_id = resp.json().get("transaction_id") or resp.json().get("id")
-            _log(f"Created schedule {inst_id} for {body['exec_at']}")
-            return inst_id
-    except Exception as exc:  # noqa: BLE001
-        _log(f"[warn] failed to create schedule: {exc}")
-    return None
+        resp = requests.post(url, json=payload, timeout=15)
+        resp.raise_for_status()
+        return resp.json().get("transaction_id") or resp.json().get("id")
+    except Exception as exc:
+        _log(f"Failed to create schedule: {exc}")
+        return None
 
 
-# ───────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
+# Timetable-probe trigger
+# ─────────────────────────────────────────────────────────────────────
+def _trigger_probe() -> None:
+    url = f"{_internal_base()}/api/lcsd/lcsd_af_timetable_probe"
+    try:
+        requests.post(url, params={"start": 0, "end": 20}, timeout=30)
+    except Exception as exc:
+        _log(f"lcsd_af_timetable_probe trigger failed: {exc}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Exec-date calculation
+# ─────────────────────────────────────────────────────────────────────
+def _calc_exec_date(today: date,
+                    this_ok: bool,
+                    next_ok: bool) -> datetime:
+    yy, mm, dd = today.year, today.month, today.day
+    days_in_month = calendar.monthrange(yy, mm)[1]
+    mid = days_in_month // 2
+
+    # A. upper half (1…mid)
+    if dd <= mid:
+        exec_day = mid + 1
+        exec_date = date(yy, mm, exec_day)
+
+    # B. last day
+    elif dd == days_in_month:
+        nyy, nmm = _month_after(yy, mm)
+        n_days = calendar.monthrange(nyy, nmm)[1]
+        exec_day = n_days // 2 + 1
+        exec_date = date(nyy, nmm, exec_day)
+
+    # C. lower half but not last day
+    else:
+        if not next_ok:                           # C3i
+            tentative = today + timedelta(days=5)
+            if tentative.month != mm:             # rolled over → use last day
+                exec_date = date(yy, mm, days_in_month)
+            else:
+                exec_date = tentative
+        else:                                     # C3ii
+            nyy, nmm = _month_after(yy, mm)
+            n_days = calendar.monthrange(nyy, nmm)[1]
+            exec_day = n_days // 2 + 1
+            exec_date = date(nyy, nmm, exec_day)
+
+    # fixed local schedule time → 03:00 HKT
+    exec_dt = datetime(
+        exec_date.year, exec_date.month, exec_date.day, 3, 0, tzinfo=_HKT
+    )
+    # ensure ≥ 60 s ahead
+    if (exec_dt - datetime.now(_HKT)).total_seconds() < 60:
+        exec_dt = datetime.now(_HKT) + timedelta(seconds=65)
+    return exec_dt
+
+
+# ─────────────────────────────────────────────────────────────────────
 # FastAPI route
-# ───────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────
 @router.api_route(
     "/api/lcsd/lcsd_cleanup_validator_scheduler",
     methods=["GET", "POST"],
-    summary="Clean up duplicate Excel timetables AND manage re-probe schedule",
+    summary="LCSD timetable clean-up, validation & self-scheduler",
 )
 def lcsd_cleanup_validator_scheduler() -> Dict:
-    today_hkt = datetime.now(_TZ_HKT).date()
+    today = _today_hkt()
+    yy, mm = today.year, today.month
+    nyy, nmm = _month_after(yy, mm)
 
-    # ── A) clean-up + validate for *this* and *next* month ──────────────
-    this_stats = _cleanup_month(today_hkt.year, today_hkt.month, today_hkt.day)
+    # 1️⃣ process current & next month ----------------------------------------
+    c_loaded, c_del, c_ok = _process_month(yy, mm, today.day)
+    _log(f"Current month: loaded={c_loaded}, deleted={c_del}, ok={c_ok}")
 
-    # compute next month
-    nxt_mon = today_hkt.month + 1 if today_hkt.month < 12 else 1
-    nxt_yr  = today_hkt.year + 1 if nxt_mon == 1 else today_hkt.year
-    # ref-day → use today's *day* as anchor for next month
-    next_stats = _cleanup_month(nxt_yr, nxt_mon, today_hkt.day)
+    n_loaded, n_del, n_ok = _process_month(nyy, nmm, 1)
+    _log(f"Next month: loaded={n_loaded}, deleted={n_del}, ok={n_ok}")
 
-    # ── B) trigger probe if *this-month* failed ─────────────────────────
-    probe_result = None
-    if not this_stats["validation_passed"]:
-        probe_result = _trigger_timetable_probe()
+    # 2️⃣ trigger probe if current failed ------------------------------------
+    if not c_ok:
+        _log("Current month validation failed – triggering timetable_probe")
+        _trigger_probe()
 
-    # ── C) wipe old schedules created by this helper ────────────────────
-    wiped_ids = _wipe_existing_schedules()
+    # 3️⃣ clean up **existing** schedules raised by this script --------------
+    for inst_id in _scheduler_search():
+        _scheduler_delete(inst_id)
+        _log(f"Cancelled previous schedule {inst_id}")
 
-    # ── D) create new schedule for next probe run ───────────────────────
-    exec_dt_hkt = _compute_next_exec(today_hkt)
-    new_sched_id = _schedule_probe(exec_dt_hkt)
+    # 4️⃣ create new schedule -------------------------------------------------
+    exec_dt = _calc_exec_date(today, c_ok, n_ok)
+    exec_iso = exec_dt.isoformat(timespec="seconds")
+    new_id = _scheduler_create(exec_iso)
+    if new_id:
+        _log(f"Scheduled new timetable_probe at {exec_iso} (id={new_id})")
+    else:
+        _log("Failed to create new schedule")
 
-    # ── summary payload -------------------------------------------------
     return {
-        "status":  "success",
-        "timestamp_hkt": datetime.now(_TZ_HKT).isoformat(timespec="seconds"),
-        "this_month": this_stats,
-        "next_month": next_stats,
-        "thismonth_validation_passed": this_stats["validation_passed"],
-        "nextmonth_validation_passed": next_stats["validation_passed"],
-        "probe_triggered": probe_result is not None,
-        "probe_result": probe_result,
-        "wiped_schedule_ids": wiped_ids,
-        "new_schedule_id": new_sched_id,
-        "next_exec_hkt": exec_dt_hkt.isoformat(timespec="seconds"),
+        "status": "success",
+        "current_validation_passed": c_ok,
+        "next_validation_passed": n_ok,
+        "new_schedule_id": new_id,
+        "exec_at": exec_iso,
     }
