@@ -1,7 +1,7 @@
 # ── src/routers/jsondata/html_endpoints.py ─────────────────────────────
 from fastapi import APIRouter, HTTPException, Form, File, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
-from typing import List, Optional
+from typing import List
 from urllib.parse import parse_qs
 import json
 
@@ -64,7 +64,7 @@ async def upload_form_post(
                        quaternary_tag, quinary_tag, year, month, day)
     }
 
-# ── 2. HTML list table with bulk‐delete -------------------------------
+# ── 2. HTML list table with bulk‐delete & Select All ---------------------
 @router.get("/api/json/list", summary="List all JSON items", response_class=HTMLResponse)
 def list_json_items():
     query = """
@@ -91,7 +91,10 @@ def list_json_items():
   <form method="post" action="/api/json/delete-multiple">
   <table border="1" cellpadding="5" cellspacing="0">
     <tr>
-      <th>Select</th>
+      <th>
+        Select<br>
+        <button type="button" id="select-all">Select All</button>
+      </th>
       <th>Tag</th><th>Secondary</th><th>Tertiary</th><th>Quaternary</th><th>Quinary</th>
       <th>Year</th><th>Month</th><th>Day</th>
       <th>Download</th>
@@ -132,6 +135,12 @@ def list_json_items():
   <br>
   <button type="submit">Delete Selected</button>
   </form>
+
+  <script>
+    document.getElementById('select-all').onclick = function() {
+      document.querySelectorAll('input[name="selected"]').forEach(cb => cb.checked = true);
+    };
+  </script>
 </body>
 </html>
 """
@@ -162,8 +171,6 @@ def delete_multiple_json(selected: List[str] = Form(...)):
                 partition_key=tag
             )
         except exceptions.CosmosResourceNotFoundError:
-            # skip if already gone
             continue
 
-    # redirect back to the list view
     return RedirectResponse(url="/api/json/list", status_code=303)
