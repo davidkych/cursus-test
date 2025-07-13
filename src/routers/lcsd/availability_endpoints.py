@@ -2,14 +2,14 @@
 """
 LCSD jogging-lane **availability** checker  —  /api/lcsd/availability
 
-Key changes (2025-07-14)
-────────────────────────
-* The public query parameter is now **lcsd_number**.  
-  – For backwards-compatibility a deprecated alias **lcsdid** is still
-    accepted but not documented.  
-* AvailabilityRequest model updated accordingly.
+Refactor 3 (2025-07-13 • af_excel_timetable backend)
+────────────────────────────────────────────────────
+* Timetable data now lives **per facility / per month** in Cosmos DB with  
+      tag='lcsd', secondary_tag='af_excel_timetable', tertiary_tag=<lcsd_number>  
+* The outward-facing API (point-in-time & period queries) is unchanged, but
+  the parameter name **lcsd_number** is now accepted alongside the legacy
+  *lcsdid* spelling.
 """
-
 from __future__ import annotations
 
 import datetime
@@ -18,7 +18,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict          # ← NEW
 from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential
 from zoneinfo import ZoneInfo
@@ -185,35 +185,45 @@ def _slice_period(intervals, q_start, q_end, legend_fn) -> List[Dict[str, str]]:
 
 # ── Pydantic model & router ──────────────────────────────────────────
 class AvailabilityRequest(BaseModel):
-    lcsd_number: str = Field(..., alias="lcsd_number")
+    # Accepts either “lcsd_number” (preferred) or legacy “lcsdid”
+    lcsdid: str = Field(..., alias="lcsd_number", description="LCSD facility number")
     date:   Optional[str] = Field(None, description="YYYY-MM-DD")
     time:   Optional[str] = Field(None, description="HH:MM[:SS]  (point query)")
     period: Optional[str] = Field(
         None, description="HH:MM[:SS]-HH:MM[:SS]  (same-day period query)"
     )
 
+    model_config = ConfigDict(populate_by_name=True)    # ← allow alias → attribute
+
 router = APIRouter()
 
 @router.post("/api/lcsd/availability")
 def availability_post(req: AvailabilityRequest):
-    return _handle(req.lcsd_number, req.date, req.time, req.period)
+    return _handle(req.lcsdid, req.date, req.time, req.period)
+
 
 @router.get("/api/lcsd/availability")
 def availability_get(
-    lcsd_number: Optional[str] = Query(None, alias="lcsd_number"),
-    lcsdid_alias: Optional[str] = Query(None, alias="lcsdid"),  # deprecated
+    lcsdid:      Optional[str] = Query(None, regex=r"^\d+$"),
+    lcsd_number: Optional[str] = Query(
+        None, alias="lcsd_number", regex=r"^\d+$",
+        description="Alias for lcsdid (preferred name)",
+    ),
     date:   Optional[str] = Query(None, regex=r"^\d{4}-\d{2}-\d{2}$"),
     time:   Optional[str] = Query(None, regex=r"^\d{1,2}:\d{2}(:\d{2})?$"),
     period: Optional[str] = Query(None, regex=_PERIOD_RE.pattern),
 ):
-    lcsdid_value = lcsd_number or lcsdid_alias
-    if not lcsdid_value:
-        raise HTTPException(400, "Query parameter 'lcsd_number' is required.")
-    return _handle(lcsdid_value, date, time, period)
+    # allow either spelling but not conflicting values
+    facility_id = lcsdid or lcsd_number
+    if not facility_id:
+        raise HTTPException(422, "Query parameter 'lcsd_number' is required.")
+    if lcsdid and lcsd_number and lcsdid != lcsd_number:
+        raise HTTPException(400, "Conflicting 'lcsdid' and 'lcsd_number' values.")
+    return _handle(facility_id, date, time, period)
 
 
 # ── main handler ─────────────────────────────────────────────────────
-def _handle(lcsdid: str,
+def _handle(lcsd_number: str,
             date_str: Optional[str],
             time_str: Optional[str],
             period_str: Optional[str]):
@@ -230,11 +240,11 @@ def _handle(lcsdid: str,
     if (year, month) not in {(first.year, first.month), (nextm.year, nextm.month)}:
         raise HTTPException(400, "Only current or next month timetables accepted.")
 
-    doc = _latest_timetable_doc(lcsdid, year, month)
+    doc = _latest_timetable_doc(lcsd_number, year, month)
     if not doc:
         raise HTTPException(404, "Timetable not found for requested facility/month.")
 
-    facility = doc.get("name", lcsdid)
+    facility = doc.get("name", lcsd_number)
     schedules = [doc]                        # keep helper expectations
     legend_fn = _make_legend_cache(schedules)
     intervals = _intervals_for_date(schedules, date_obj.isoformat())
@@ -243,7 +253,7 @@ def _handle(lcsdid: str,
     if not period_str:
         t_obj = (_parse_user_time(time_str)
                  if time_str else now.time().replace(microsecond=0))
-        return _point_query(now, facility, lcsdid, date_obj, t_obj,
+        return _point_query(now, facility, lcsd_number, date_obj, t_obj,
                             intervals, legend_fn)
 
     # ―― period query ―――――――――――――――――――――――――――――――――――――――――――――――
@@ -255,30 +265,30 @@ def _handle(lcsdid: str,
     return {
         "timestamp_queried": now.isoformat(timespec="seconds"),
         "facility_name": facility,
-        "requested": {"lcsd_number": lcsdid, "date": date_obj.isoformat(), "period": period_str},
+        "requested": {"lcsd_number": lcsd_number, "date": date_obj.isoformat(), "period": period_str},
         "segments": segments,
     }
 
 
 # ── helpers for point query ──────────────────────────────────────────
-def _point_query(ts, fac_name, lcsdid, d_obj, t_obj, intervals, legend_fn):
+def _point_query(ts, fac_name, lcsd_number, d_obj, t_obj, intervals, legend_fn):
     sec = _sec(t_obj)
     for st, en, status in intervals:
         if st <= sec <= en:
-            return _build_point_resp(ts, fac_name, lcsdid, d_obj, t_obj,
+            return _build_point_resp(ts, fac_name, lcsd_number, d_obj, t_obj,
                                      status, "true" if status in _TRUE else "false",
                                      legend_fn(status))
     # outside all intervals → closed
-    return _build_point_resp(ts, fac_name, lcsdid, d_obj, t_obj,
+    return _build_point_resp(ts, fac_name, lcsd_number, d_obj, t_obj,
                              "closed", "false", "運動場關閉時間")
 
 
-def _build_point_resp(ts, fac_name, lcsdid, d_obj, t_obj, status, avail, legend):
+def _build_point_resp(ts, fac_name, lcsd_number, d_obj, t_obj, status, avail, legend):
     return {
         "timestamp_queried": ts.isoformat(timespec="seconds"),
         "facility_name": fac_name,
         "requested": {
-            "lcsd_number": lcsdid,
+            "lcsd_number": lcsd_number,
             "datetime_iso": f"{d_obj.isoformat()}T{t_obj.isoformat()}",
         },
         "status_letter": status,
