@@ -43,6 +43,32 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
         paths: [ '/tag' ]
         kind:  'Hash'
       }
+      // ────────────────────────────────────────────────────────────────
+      // Composite index to support:
+      //   ORDER BY c.day DESC, c._ts DESC
+      // ────────────────────────────────────────────────────────────────
+      indexingPolicy: {
+        automatic: true
+        indexingMode: 'consistent'
+        includedPaths: [
+          { path: '/*' }
+        ]
+        excludedPaths: [
+          { path: '/"_etag"/?' }
+        ]
+        compositeIndexes: [
+          [
+            {
+              path: '/day'
+              order: 'descending'
+            }
+            {
+              path: '/_ts'
+              order: 'descending'
+            }
+          ]
+        ]
+      }
     }
     options: {}
   }
