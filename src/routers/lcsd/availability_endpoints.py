@@ -1,7 +1,7 @@
 # ── src/routers/lcsd/availability_endpoints.py ─────────────────────────────
 """
 LCSD jogging-lane **availability** checker  —  /api/lcsd/availability
-
+ 
 Refactor 3 (2025-07-13 • af_excel_timetable backend)
 ────────────────────────────────────────────────────
 * Timetable data lives **per facility / per month** in Cosmos DB with  
