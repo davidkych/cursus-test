@@ -11,8 +11,8 @@ on:
     secrets:
       AZURE_CREDENTIALS:     { required: true }
       AZURE_SUBSCRIPTION_ID: { required: true }
-      AAD_CLIENT_ID:         { required: true }     # ← NEW
-      AAD_TENANT_ID:         { required: true }     # ← NEW
+      AAD_TENANT_ID:         { required: true }   # ← NEW
+      AAD_CLIENT_ID:         { required: true }   # ← NEW
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
@@ -20,7 +20,7 @@ on:
       sched_func:
         description: 'Scheduler Function-App name'
         value: ${{ jobs.provision.outputs.sched_func }}
-      static_site:                             # ← NEW
+      static_site:
         description: 'Static Web App name'
         value: ${{ jobs.provision.outputs.static_site }}
 
@@ -30,7 +30,7 @@ jobs:
     outputs:
       cosmos:      ${{ steps.infra.outputs.cosmos }}
       sched_func:  ${{ steps.infra.outputs.sched_func }}
-      static_site: ${{ steps.infra.outputs.static_site }}   # ← NEW
+      static_site: ${{ steps.infra.outputs.static_site }}
 
     steps:
       - uses: actions/checkout@v3
@@ -51,10 +51,10 @@ jobs:
             --resource-group ${{ inputs.RG }} \
             --template-file infra/main.bicep \
             --parameters \
-                planSkuName=${{ inputs.PLAN_SKU }} \
-                timeout=${{ inputs.TIMEOUT }} \
-                aadClientId=${{ secrets.AAD_CLIENT_ID }} \
-                aadTenantId=${{ secrets.AAD_TENANT_ID }}
+              planSkuName=${{ inputs.PLAN_SKU }} \
+              timeout=${{ inputs.TIMEOUT }} \
+              aadTenantId=${{ secrets.AAD_TENANT_ID }} \
+              aadClientId=${{ secrets.AAD_CLIENT_ID }}
 
           COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)
@@ -68,4 +68,3 @@ jobs:
           echo "static_site=$STATIC" >> $GITHUB_OUTPUT
 
           echo "🏗 infra ready – cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"
-

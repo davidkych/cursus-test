@@ -1,17 +1,16 @@
 {
-  "navigationFallback": {
-    "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/*.png", "/*.ico"]
-  },
-
   "routes": [
     {
       "route": "/account/login",
-      "allowedRoles": ["anonymous", "authenticated"]
+      "allowedRoles": ["anonymous"]
     },
     {
       "route": "/account/*",
       "allowedRoles": ["authenticated"]
     }
-  ]
+  ],
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/assets/*", "/*.png", "/*.ico"]
+  }
 }

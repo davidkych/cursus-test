@@ -1,4 +1,4 @@
-// infra/modules/webapp.bicep
+// modules/webapp.bicep
 targetScope = 'resourceGroup'
 
 @description('Azure region')
@@ -25,12 +25,18 @@ param appName string
 @description('Durable-scheduler function name')
 param schedFuncName string
 
-@description('AAD app-registration (client) ID')
-param aadClientId string
-
-@description('AAD (Entra ID) tenant ID')
+// ── NEW ─────────────────────────────────────────────────────────────
+@description('Azure AD tenant ID')
 param aadTenantId string
-…
+
+@description('Azure AD application (client) ID')
+param aadClientId string
+// ────────────────────────────────────────────────────────────────────
+
+var schedulerBaseUrl = 'https://${schedFuncName}.azurewebsites.net'
+var openIdIssuer      = 'https://login.microsoftonline.com/${aadTenantId}/v2.0'
+
+// —————————————————— Web-App ————————————————————————————————
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -48,34 +54,35 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
-        { name: 'SCHEDULER_BASE_URL',                  value: 'https://${schedFuncName}.azurewebsites.net' }
+        { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
         { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
       ]
     }
   }
 }
 
+// —————————————————— Easy Auth ————————————————————————————————
+// Keeps all existing endpoints public but enables AAD sign-in.
 resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
   name: '${app.name}/authsettingsV2'
   properties: {
     platformEnabled: true
-    globalValidation: {
-      unauthenticatedClientAction: 'AllowAnonymous'     // keep endpoints open
-      redirectToProvider:         'AzureActiveDirectory'
-    }
+    unauthenticatedClientAction: 'AllowAnonymous'
     identityProviders: {
       azureActiveDirectory: {
-        enabled:     true
+        enabled: true
         registration: {
           clientId:     aadClientId
-          openIdIssuer: 'https://login.microsoftonline.com/${aadTenantId}/v2.0'
+          openIdIssuer: openIdIssuer
         }
         validation: {
           allowedAudiences: [
-            'api://${aadClientId}'
+            aadClientId
           ]
         }
       }
     }
   }
 }
+
+output webAppName string = app.name

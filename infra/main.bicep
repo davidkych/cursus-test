@@ -10,17 +10,19 @@ param planSkuName string = 'S1'
 @description('Container start-up grace period for the **web-app** (sec)')
 param timeout int = 1800
 
-@description('AAD (Entra ID) tenant ID')
+// ── NEW ─────────────────────────────────────────────────────────────
+@description('Azure AD tenant ID')
 param aadTenantId string
 
-@description('AAD app-registration (client) ID')
+@description('Azure AD application (client) ID')
 param aadClientId string
+// ────────────────────────────────────────────────────────────────────
 
 var appName        = 'cursus-test-app'
 var schedFuncName  = 'cursus-test-sched'
-var staticSiteName = 'cursus-test-web'        // ← Static Web App name
+var staticSiteName = 'cursus-test-web'
 
-// 1) App-Service Plan -------------------------------------------------
+// 1) App-Service Plan ------------------------------------------------
 module planModule './modules/plan.bicep' = {
   name: 'plan'
   params: {
@@ -30,7 +32,7 @@ module planModule './modules/plan.bicep' = {
   }
 }
 
-// 2) Cosmos DB --------------------------------------------------------
+// 2) Cosmos DB -------------------------------------------------------
 module cosmosModule './modules/cosmos.bicep' = {
   name: 'cosmos'
   params: {
@@ -40,7 +42,7 @@ module cosmosModule './modules/cosmos.bicep' = {
   dependsOn: [ planModule ]
 }
 
-// 3) FastAPI Web-App --------------------------------------------------
+// 3) FastAPI Web-App -----------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -52,13 +54,13 @@ module webAppModule './modules/webapp.bicep' = {
     containerName:  cosmosModule.outputs.containerName
     appName:        appName
     schedFuncName:  schedFuncName
-    aadClientId:    aadClientId          // ← NEW
-    aadTenantId:    aadTenantId          // ← NEW
+    aadTenantId:    aadTenantId        // ← NEW
+    aadClientId:    aadClientId        // ← NEW
   }
   dependsOn: [ cosmosModule, planModule ]
 }
 
-// 4) Durable Scheduler -----------------------------------------------
+// 4) Durable Scheduler ----------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -73,13 +75,12 @@ module schedulerModule './modules/scheduler.bicep' = {
   dependsOn: [ cosmosModule, planModule ]
 }
 
-// 5) Static Web-App (Vue frontend) -----------------------------------
+// 5) Static Web-App (Vue frontend) ----------------------------------
 module staticWebModule './modules/staticweb.bicep' = {
   name: 'staticWeb'
   params: {
     location:       location
     staticSiteName: staticSiteName
-    aadClientId:    aadClientId          // ← NEW
   }
 }
 
@@ -87,4 +88,4 @@ output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
 output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
-output staticSiteName        string = staticWebModule.outputs.staticSiteName   // ← NEW
+output staticSiteName        string = staticWebModule.outputs.staticSiteName

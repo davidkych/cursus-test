@@ -10,8 +10,6 @@ permissions:
   id-token: write
   contents: read
 
-# These values are handy inside individual steps; they are **not** used in any
-# job-level expressions, so the parser no longer complains.
 env:
   RG:       cursus-test-rg
   LOCATION: eastasia
@@ -20,7 +18,6 @@ env:
   TIMEOUT:  1800          # seconds
 
 jobs:
-  # ─────────────────────────── infra ───────────────────────────
   infra:
     uses: ./.github/workflows/infra.yml
     with:
@@ -31,10 +28,9 @@ jobs:
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      AAD_CLIENT_ID:         ${{ secrets.AAD_CLIENT_ID }}     # ← NEW
       AAD_TENANT_ID:         ${{ secrets.AAD_TENANT_ID }}     # ← NEW
+      AAD_CLIENT_ID:         ${{ secrets.AAD_CLIENT_ID }}     # ← NEW
 
-  # ────────────────────────── web-app ──────────────────────────
   web_app:
     needs: infra
     uses: ./.github/workflows/web-app.yml
@@ -47,7 +43,6 @@ jobs:
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
-  # ───────────────────────── scheduler ─────────────────────────
   scheduler:
     needs: infra
     uses: ./.github/workflows/scheduler.yml
@@ -59,7 +54,6 @@ jobs:
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
-  # ──────────────────────── static-web ─────────────────────────
   static_web:
     needs: infra
     uses: ./.github/workflows/static-web.yml
