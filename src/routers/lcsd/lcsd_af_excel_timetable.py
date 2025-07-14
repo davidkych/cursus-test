@@ -9,17 +9,22 @@ Workflow
     (tag =`lcsd`, secondary_tag =`af_availtimetable`).
 
 2.  For every facility listed there, download & parse its jogging-schedule
-    Excel(s) via `excel_to_timetable()`.
+    Excel **and/or** PDF for each ``month_year`` entry:
 
-3.  Save **one JSON per worksheet** back to Cosmos DB using the existing JSON
-    helper:
+        • Always try **Excel first** via ``excel_to_timetable()``.  
+        • If that raises **any** exception **and** a ``pdf_url`` for the same
+          month / year is available, fall back to
+          ``pdf_to_timetable()`` (new helper).
+
+3.  Save **one JSON per worksheet / PDF page** back to Cosmos DB using the
+    existing JSON helper:
+
         tag            = 'lcsd'
         secondary_tag  = 'af_excel_timetable'
         tertiary_tag   = <lcsd_number>
         year/month/day = date when this endpoint runs
 
-4.  **NEW (2025-07-13)** – After completing its own work this endpoint now
-    *fire-and-forgets* a POST to
+4.  **Unchanged** – when its own work is done, fire-and-forget a POST to
         `/api/lcsd/lcsd_cleanup_validator_scheduler`
     to trigger automatic clean-up & re-validation.  Any error is silently
     swallowed; the primary response payload is unchanged.
@@ -31,7 +36,7 @@ from datetime import datetime, date
 from typing import List, Dict
 from zoneinfo import ZoneInfo
 
-import requests                                  # ← NEW
+import requests
 from fastapi import APIRouter, HTTPException, Query
 from azure.cosmos import exceptions as cosmos_exc
 
@@ -43,9 +48,9 @@ from routers.jsondata.endpoints import (
 )
 
 from .lcsd_util_excel_timetable_parser import excel_to_timetable
+from .lcsd_util_pdf_timetable_parser   import pdf_to_timetable   # ← NEW
 
 router = APIRouter()
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Internal helpers
@@ -58,7 +63,7 @@ def _load_latest_avail_json() -> Dict:
     """
     Return the *data* field of the most-recent
         tag='lcsd', secondary_tag='af_availtimetable'
-    document in Cosmos DB (same partition, so no cross-partition query).
+    document in Cosmos DB (single-partition query).
     """
     query = """
         SELECT c.id, c.data, c.year, c.month, c.day
@@ -73,7 +78,7 @@ def _load_latest_avail_json() -> Dict:
         _container.query_items(
             query=query,
             parameters=params,
-            partition_key="lcsd",           # single-partition query
+            partition_key="lcsd",
             enable_cross_partition_query=False,
         )
     )
@@ -93,12 +98,12 @@ def _load_latest_avail_json() -> Dict:
 
 def _save_record(payload: Dict, today: date) -> None:
     """
-    Save one Excel-timetable JSON back into Cosmos DB.
+    Save one timetable JSON back into Cosmos DB.
     Overwrites (upserts) if the same ID already exists.
     """
     _upsert(
         "lcsd",                      # tag  (partition key)
-        "af_excel_timetable",        # secondary_tag
+        "af_excel_timetable",        # secondary_tag (unchanged name)
         payload.get("lcsd_number"),  # tertiary_tag
         None, None,                  # quaternary / quinary
         today.year,
@@ -128,7 +133,7 @@ def _internal_base() -> str:
 @router.api_route(
     "/api/lcsd/lcsd_af_excel_timetable",
     methods=["GET", "POST"],
-    summary="Harvest LCSD jogging timetables (Excel) and save to Cosmos DB",
+    summary="Harvest LCSD jogging timetables (Excel → JSON, PDF fallback) and save to Cosmos DB",
 )
 def lcsd_af_excel_timetable(
     timeout: int = Query(15, ge=5,  le=60, description="Per-download timeout (s)"),
@@ -136,13 +141,17 @@ def lcsd_af_excel_timetable(
 ) -> Dict:
     """
     Trigger Excel download / parse for all facilities discovered by the latest
-    *avail-timetable* probe, then kick off the clean-up validator scheduler.
+    *avail-timetable* probe **with PDF fallback**.
+
+    For every `(excel_url, pdf_url, month_year)` trio found in the probe data:
+        1.  Try Excel → ``excel_to_timetable``  
+        2.  On any exception **and** if *pdf_url* is present → ``pdf_to_timetable``  
+        3.  Skip the worksheet/page entirely if both parsers fail.
     """
     try:
         avail_data = _load_latest_avail_json()
     except HTTPException:
-        # re-raise HTTPException untouched so FastAPI keeps status code
-        raise
+        raise  # keep status code
     except cosmos_exc.CosmosHttpResponseError as exc:
         raise HTTPException(
             status_code=500,
@@ -151,7 +160,7 @@ def lcsd_af_excel_timetable(
 
     today = _today_hkt()
     saved   = 0        # how many JSON docs written
-    skipped = 0        # how many worksheets skipped / errored
+    skipped = 0        # how many worksheets / pages skipped
 
     for fac in avail_data.get("facilities", []):
         fac_info = {
@@ -160,26 +169,44 @@ def lcsd_af_excel_timetable(
             "name":        fac.get("name"),
         }
         for sched in fac.get("jogging_schedule", []):
-            url = sched.get("excel_url")
-            mm  = sched.get("month_year")
-            if not url or not mm:
+            mm        = sched.get("month_year")
+            excel_url = sched.get("excel_url")
+            pdf_url   = sched.get("pdf_url")
+            if not mm:
                 continue
 
-            try:
-                sheet_dicts: List[Dict] = excel_to_timetable(
-                    url,
-                    mm,
-                    timeout=timeout,
-                    debug=debug,
-                )
-            except Exception as exc:            # noqa: BLE001
-                if debug:
-                    print(f"[WARN] Skipped {url} → {exc}")
+            sheets: List[Dict] = []
+            # 1️⃣ Excel first --------------------------------------------------
+            if excel_url:
+                try:
+                    sheets = excel_to_timetable(
+                        excel_url,
+                        mm,
+                        timeout=timeout,
+                        debug=debug,
+                    )
+                except Exception as exc:       # noqa: BLE001
+                    if debug:
+                        print(f"[WARN] Excel parse failed → {exc}")
+            # 2️⃣ Fallback to PDF ---------------------------------------------
+            if not sheets and pdf_url:
+                try:
+                    sheets = pdf_to_timetable(
+                        pdf_url,
+                        mm,
+                        timeout=timeout,
+                        debug=debug,
+                    )
+                except Exception as exc:       # noqa: BLE001
+                    if debug:
+                        print(f"[WARN] PDF parse failed → {exc}")
+
+            # 3️⃣ Persist results or count as skipped -------------------------
+            if not sheets:
                 skipped += 1
                 continue
 
-            # one Cosmos document per worksheet
-            for sheet in sheet_dicts:
+            for sheet in sheets:
                 payload = {**fac_info, **sheet}
                 _save_record(payload, today)
                 saved += 1
@@ -193,14 +220,13 @@ def lcsd_af_excel_timetable(
         "docs_skipped":  skipped,
     }
 
-    # ── NEW: fire-and-forget clean-up/validator scheduler ───────────────────
+    # ── fire-and-forget clean-up/validator scheduler (unchanged) ────────────
     try:
         requests.post(
             f"{_internal_base()}/api/lcsd/lcsd_cleanup_validator_scheduler",
             timeout=5,
         )
     except Exception:
-        # non-blocking by design – swallow any error
-        pass
+        pass  # silent
 
     return resp
