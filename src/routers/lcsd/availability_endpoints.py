@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ConfigDict          # ← NEW
 from azure.cosmos import CosmosClient
 from azure.identity import DefaultAzureCredential
 from zoneinfo import ZoneInfo
+from azure.cosmos.exceptions import CosmosHttpResponseError
 
 # ── constants ──────────────────────────────────────────────────────────────
 _TAG       = "lcsd"
@@ -48,12 +49,18 @@ def _latest_timetable_doc(lcsd_number: str, year: int, month: int) -> Optional[D
     """
     Return the **data** part of the newest `af_excel_timetable` document that
     matches (lcsd_number, year, month).  Newest = highest `day`, `_ts` tie-break.
+
+    Any Cosmos-side error is converted into a clear HTTP 502 so the client
+    (and your CI log) shows what really happened.
     """
     query = """
       SELECT c.data, c.day, c._ts
       FROM   c
-      WHERE  c.tag = @tag AND c.secondary_tag = @sec AND c.tertiary_tag = @ter
-             AND  c.year = @yr  AND c.month = @mon
+      WHERE  c.tag = @tag
+         AND c.secondary_tag = @sec
+         AND c.tertiary_tag = @ter
+         AND c.year = @yr
+         AND c.month = @mon
       ORDER BY c.day DESC, c._ts DESC
     """
     params = [
@@ -63,15 +70,20 @@ def _latest_timetable_doc(lcsd_number: str, year: int, month: int) -> Optional[D
         {"name": "@yr",   "value": year},
         {"name": "@mon",  "value": month},
     ]
-    docs = list(
-        _container.query_items(
-            query=query,
-            parameters=params,
-            partition_key=_TAG,
-            enable_cross_partition_query=False,
+    try:
+        docs = list(
+            _container.query_items(
+                query=query,
+                parameters=params,
+                partition_key=_TAG,
+                enable_cross_partition_query=False,
+            )
         )
-    )
-    return docs[0]["data"] if docs else None
+        return docs[0]["data"] if docs else None
+    except CosmosHttpResponseError as exc:
+        # log-stream friendly and visible to the caller
+        detail = f"Cosmos DB error {exc.status_code}: {exc.message}"
+        raise HTTPException(status_code=502, detail=detail) from exc
 
 
 # ── helpers ────────────────────────────────────────────────────────────────

@@ -66,7 +66,7 @@ jobs:
               --account-name    "$COSMOS" \
               --principal-id    "$principalId" \
               --role-definition-id "$roleId" \
-              --scope "/" || true
+              --scope "/" 
 
           echo "✅ web-app MSI granted data-plane role"
 
