@@ -1,19 +1,15 @@
-# ── src/routers/lcsd/html_dashboard_monthview_endpoints.py ────────────────
+# ── src/routers/lcsd/html_dashboard_monthview_endpoints.py ──────────────────
 """
-Monthly (calendar / list) availability dashboard for an LCSD athletic-field.
+Monthly dashboard (HTML) for an LCSD athletic-field – calendar + list view.
 
-Path
-    /api/lcsd/dashboard/{lcsd_number}/month        (GET)
-
-This is the modernised rewrite of the legacy *html_dashboard_monthview_endpoints*
-module.  The UI and overall behaviour stay the same, but it now:
-
-• Talks to the **new** `/api/lcsd/availability` endpoint introduced in
-  refactor 3 (2025-07-13).
-• Removes all hard-coded special-cases for 「將軍澳運動場 主／副場」
-  (1060a / 1060b) – those are handled upstream by the timetable-generation
-  pipeline.
+* Uses the **new** /api/lcsd/availability endpoint (preferred parameter
+  **lcsd_number**).
+* Removes all hard-coded 1060a/1060b exceptions – timetable generation
+  already handles those.
+* Mark-up and UI behaviour follow the legacy version.
 """
+
+from __future__ import annotations
 
 import datetime
 import html
@@ -28,7 +24,7 @@ router = APIRouter()
     include_in_schema=False,
     response_class=HTMLResponse,
 )
-def month_dashboard(                       # noqa: C901  (long HTML string)
+def month_dashboard(                       # noqa: C901  (large HTML builder)
     request: Request,
     lcsd_number: str,
     year:  int  = Query(None, ge=1900),
@@ -40,7 +36,7 @@ def month_dashboard(                       # noqa: C901  (long HTML string)
     esc_id    = html.escape(lcsd_number)
     init_view = view if view in {"calendar", "list"} else "calendar"
 
-    # ── 1️⃣ picker form ───────────────────────────────────────────────────────
+    # ── 1. picker form ───────────────────────────────────────────────────────
     if None in {year, month, start, end}:
         _now = datetime.datetime.now()
         return HTMLResponse(
@@ -81,7 +77,7 @@ def month_dashboard(                       # noqa: C901  (long HTML string)
 """
         )
 
-    # ── 2️⃣ dashboard (calendar + list views) ────────────────────────────────
+    # ── 2. dashboard (both views + toggle) ───────────────────────────────────
     ym_title = f"{year}-{month:02}"
     html_page = f"""
 <!doctype html>
@@ -139,9 +135,9 @@ def month_dashboard(                       # noqa: C901  (long HTML string)
 <script>
 (() => {{
 /* ---------- constants ---------------------------------------- */
-const id       = "{esc_id}";
-const initView = "{init_view}";
-let   curView  = initView;
+const lcsdNumber = "{esc_id}";
+const initView   = "{init_view}";
+let   curView    = initView;
 
 const YEAR  = {year};
 const MONTH = {month - 1};            /* JS months are 0-based */
@@ -168,22 +164,22 @@ const mark = v => v==='true'   ? '可用 ✅'
                 :               '未知 ❓';
 
 /* ---- title (facility name) ---------------------------------- */
-fetch('/api/lcsd/availability?lcsd_number=' + id)
+fetch('/api/lcsd/availability?lcsd_number=' + lcsdNumber)
   .then(r => r.ok ? r.json() : null)
   .then(j => {{
     document.getElementById('title').textContent =
-      (j && j.facility_name ? j.facility_name : '運動場') + ' (' + id + ')';
+      (j && j.facility_name ? j.facility_name : '運動場') + ' (' + lcsdNumber + ')';
   }});
 
 /* ---------- rapid / neighbour helpers ------------------------ */
+function nameFor(code) {{
+  return nameMap?.get(code) ?? code;
+}}
 async function fetchRapid() {{
   if (nameMap && rapidData) return;
   const res = await fetch("/api/json?tag=lcsd&secondary_tag=rapid");
   rapidData = await res.json();
   nameMap   = new Map(rapidData.map(r => [r.lcsd_number, r.name]));
-}}
-function nameFor(code) {{
-  return nameMap?.get(code) ?? code;
 }}
 function aggregateAvail(segs) {{
   if (!segs.length) return 'unknown';
@@ -203,7 +199,7 @@ prebuildListCards();
 prebuildCalendarTable();
 
 /* ---------- data fetch & rendering --------------------------- */
-const monthData = Object.create(null);   // isoDate -> segments[]
+const monthData = Object.create(null);   // isoDate → segments[]
 populateViews().then(() => {{ toggleBtn.disabled = false; }});
 
 /* ---------- toggle handler ----------------------------------- */
@@ -246,7 +242,7 @@ function prebuildListCards() {{
 }}
 
 /* =============================================================
-   >>>>  FIXED  function  (do-while guarantees first row)  <<<<
+   >>>>  FIXED  function  (do-while to guarantee first row)  <<<<
    ============================================================= */
 function prebuildCalendarTable() {{
   const tbody = document.querySelector('#calView tbody');
@@ -269,6 +265,9 @@ function prebuildCalendarTable() {{
       cur = new Date(cur.getTime() + DAY_MS);
     }}
     tbody.appendChild(tr);
+    /* Continue until we have advanced to the first Sunday *after*
+       the target month.  At that point cur.getMonth() !== MONTH
+       and cur.getDay() === 0, so the loop terminates. */
   }} while (cur.getMonth() === MONTH || cur.getDay() !== 0);
 }}
 
@@ -279,7 +278,7 @@ async function populateViews() {{
   for (let d = 1; d <= daysInMonth; d++) {{
     const dStr  = iso(new Date(YEAR, MONTH, d));
     const period = encodeURIComponent(START + '-' + END);
-    const url = `/api/lcsd/availability?lcsd_number=${{id}}&date=${{dStr}}&period=${{period}}`;
+    const url = `/api/lcsd/availability?lcsd_number=${{lcsdNumber}}&date=${{dStr}}&period=${{period}}`;
 
     tasks.push(
       fetch(url)
@@ -333,7 +332,7 @@ async function addNeighbourLines(dateStr, timeRange, cell) {{
   try {{
     await fetchRapid();
 
-    const rec = rapidData.find(r => r.lcsd_number === id);
+    const rec = rapidData.find(r => r.lcsd_number === lcsdNumber);
     const neighbours = rec?.nearest || [];
     if (!neighbours.length) {{
       cell.innerHTML = cell.innerHTML.replace(/<em[^>]*>.*<\\/em>/,'無鄰近場地資料');

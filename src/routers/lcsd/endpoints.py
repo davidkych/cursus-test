@@ -1,4 +1,4 @@
-# ── src/routers/lcsd/endpoints.py ───────────────────────────────────────────
+# ── src/routers/lcsd/endpoints.py ────────────────────────────────────────────
 from fastapi import APIRouter
 
 from .lcsd_af_info import router as _af_info_router
@@ -10,8 +10,8 @@ from .lcsd_cleanup_validator_scheduler import router as _cleanup_sched_router
 from .availability_endpoints import router as _availability_router
 from .html_availability_endpoints import router as _html_availability_router
 from .html_dashboard_endpoints import router as _html_dashboard_router
-from .html_dashboard_monthview_endpoints import (          # ← NEW
-    router as _html_dashboard_month_router,
+from .html_dashboard_monthview_endpoints import (        # ← NEW
+    router as _html_dashboard_monthview_router,
 )
 
 router = APIRouter()
@@ -25,4 +25,4 @@ router.include_router(_cleanup_sched_router)
 router.include_router(_availability_router)
 router.include_router(_html_availability_router)
 router.include_router(_html_dashboard_router)
-router.include_router(_html_dashboard_month_router)        # ← NEW
+router.include_router(_html_dashboard_monthview_router)   # ← NEW
