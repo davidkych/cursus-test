@@ -11,6 +11,8 @@ on:
     secrets:
       AZURE_CREDENTIALS:     { required: true }
       AZURE_SUBSCRIPTION_ID: { required: true }
+      AAD_CLIENT_ID:         { required: true }     # ← NEW
+      AAD_TENANT_ID:         { required: true }     # ← NEW
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
@@ -48,7 +50,11 @@ jobs:
             --name $DEPLOY_NAME \
             --resource-group ${{ inputs.RG }} \
             --template-file infra/main.bicep \
-            --parameters planSkuName=${{ inputs.PLAN_SKU }} timeout=${{ inputs.TIMEOUT }}
+            --parameters \
+                planSkuName=${{ inputs.PLAN_SKU }} \
+                timeout=${{ inputs.TIMEOUT }} \
+                aadClientId=${{ secrets.AAD_CLIENT_ID }} \
+                aadTenantId=${{ secrets.AAD_TENANT_ID }}
 
           COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)

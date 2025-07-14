@@ -1,4 +1,4 @@
-// modules/webapp.bicep
+// infra/modules/webapp.bicep
 targetScope = 'resourceGroup'
 
 @description('Azure region')
@@ -25,8 +25,12 @@ param appName string
 @description('Durable-scheduler function name')
 param schedFuncName string
 
-var schedulerBaseUrl = 'https://${schedFuncName}.azurewebsites.net'
+@description('AAD app-registration (client) ID')
+param aadClientId string
 
+@description('AAD (Entra ID) tenant ID')
+param aadTenantId string
+…
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -44,11 +48,34 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
-        { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
+        { name: 'SCHEDULER_BASE_URL',                  value: 'https://${schedFuncName}.azurewebsites.net' }
         { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
       ]
     }
   }
 }
 
-output webAppName string = app.name
+resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
+  name: '${app.name}/authsettingsV2'
+  properties: {
+    platformEnabled: true
+    globalValidation: {
+      unauthenticatedClientAction: 'AllowAnonymous'     // keep endpoints open
+      redirectToProvider:         'AzureActiveDirectory'
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled:     true
+        registration: {
+          clientId:     aadClientId
+          openIdIssuer: 'https://login.microsoftonline.com/${aadTenantId}/v2.0'
+        }
+        validation: {
+          allowedAudiences: [
+            'api://${aadClientId}'
+          ]
+        }
+      }
+    }
+  }
+}

@@ -10,6 +10,12 @@ param planSkuName string = 'S1'
 @description('Container start-up grace period for the **web-app** (sec)')
 param timeout int = 1800
 
+@description('AAD (Entra ID) tenant ID')
+param aadTenantId string
+
+@description('AAD app-registration (client) ID')
+param aadClientId string
+
 var appName        = 'cursus-test-app'
 var schedFuncName  = 'cursus-test-sched'
 var staticSiteName = 'cursus-test-web'        // ← Static Web App name
@@ -46,6 +52,8 @@ module webAppModule './modules/webapp.bicep' = {
     containerName:  cosmosModule.outputs.containerName
     appName:        appName
     schedFuncName:  schedFuncName
+    aadClientId:    aadClientId          // ← NEW
+    aadTenantId:    aadTenantId          // ← NEW
   }
   dependsOn: [ cosmosModule, planModule ]
 }
@@ -71,6 +79,7 @@ module staticWebModule './modules/staticweb.bicep' = {
   params: {
     location:       location
     staticSiteName: staticSiteName
+    aadClientId:    aadClientId          // ← NEW
   }
 }
 
