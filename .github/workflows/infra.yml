@@ -11,8 +11,6 @@ on:
     secrets:
       AZURE_CREDENTIALS:     { required: true }
       AZURE_SUBSCRIPTION_ID: { required: true }
-      AAD_TENANT_ID:         { required: true }   # ← NEW
-      AAD_CLIENT_ID:         { required: true }   # ← NEW
     outputs:
       cosmos:
         description: 'Cosmos DB account name'
@@ -40,6 +38,30 @@ jobs:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
+      # ── NEW: ensure or create AAD app registration ────────────────
+      - name: Ensure AAD app registration
+        id: aad
+        shell: bash
+        run: |
+          set -eo pipefail
+          TENANT_ID=$(az account show --query tenantId -o tsv)
+          APP_NAME="cursus-test-aad"
+          CLIENT_ID=$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)
+
+          if [[ -z "$CLIENT_ID" ]]; then
+            CLIENT_ID=$(az ad app create --display-name "$APP_NAME" \
+                        --sign-in-audience AzureADMyOrg \
+                        --query appId -o tsv)
+            echo "Created AAD app registration $APP_NAME ($CLIENT_ID)"
+          else
+            echo "Re-using existing AAD app $APP_NAME ($CLIENT_ID)"
+          fi
+
+          echo "::add-mask::$CLIENT_ID"
+          echo "tenant_id=$TENANT_ID" >> $GITHUB_OUTPUT
+          echo "client_id=$CLIENT_ID" >> $GITHUB_OUTPUT
+
+      # ── Deploy all infra (Bicep) ───────────────────────────────────
       - name: Deploy Bicep infra
         id: infra
         run: |
@@ -53,8 +75,8 @@ jobs:
             --parameters \
               planSkuName=${{ inputs.PLAN_SKU }} \
               timeout=${{ inputs.TIMEOUT }} \
-              aadTenantId=${{ secrets.AAD_TENANT_ID }} \
-              aadClientId=${{ secrets.AAD_CLIENT_ID }}
+              aadTenantId=${{ steps.aad.outputs.tenant_id }} \
+              aadClientId=${{ steps.aad.outputs.client_id }}
 
           COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)
