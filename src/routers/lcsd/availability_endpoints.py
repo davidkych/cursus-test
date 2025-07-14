@@ -4,8 +4,8 @@ LCSD jogging-lane **availability** checker  —  /api/lcsd/availability
 
 Refactor 3 (2025-07-13 • af_excel_timetable backend)
 ────────────────────────────────────────────────────
-* Timetable data now lives **per facility / per month** in Cosmos DB with  
-      tag='lcsd', secondary_tag='af_excel_timetable', tertiary_tag=<lcsd_number>  
+* Timetable data lives **per facility / per month** in Cosmos DB with  
+      tag = 'lcsd', secondary_tag = 'af_excel_timetable', tertiary_tag = <lcsd_number>  
 * The outward-facing API (point-in-time & period queries) is unchanged, but
   the parameter name **lcsd_number** is now accepted alongside the legacy
   *lcsdid* spelling.
@@ -18,11 +18,11 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, ConfigDict          # ← NEW
+from pydantic import BaseModel, Field, ConfigDict
 from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosHttpResponseError          # ← keep visible
 from azure.identity import DefaultAzureCredential
 from zoneinfo import ZoneInfo
-from azure.cosmos.exceptions import CosmosHttpResponseError
 
 # ── constants ──────────────────────────────────────────────────────────────
 _TAG       = "lcsd"
@@ -45,23 +45,29 @@ _client    = (CosmosClient(_ep, credential=_key)
 _container = _client.get_database_client(_db).get_container_client(_cont)
 
 
-def _latest_timetable_doc(lcsd_number: str, year: int, month: int) -> Optional[Dict[str, Any]]:
+# ────────────────────────────────────────────────────────────────────────────
+# Cosmos helper – **ORDER BY removed** to avoid composite-index requirement
+# ────────────────────────────────────────────────────────────────────────────
+def _latest_timetable_doc(
+    lcsd_number: str,
+    year: int,
+    month: int,
+) -> Optional[Dict[str, Any]]:
     """
-    Return the **data** part of the newest `af_excel_timetable` document that
-    matches (lcsd_number, year, month).  Newest = highest `day`, `_ts` tie-break.
+    Fetch the newest `af_excel_timetable` for (*lcsd_number*, year, month).
 
-    Any Cosmos-side error is converted into a clear HTTP 502 so the client
-    (and your CI log) shows what really happened.
+    *Removed the ORDER BY clause* that caused Cosmos DB  
+    “The order by query does not have a corresponding composite index”.
+    Instead, pull the small result set and sort client-side.
     """
     query = """
       SELECT c.data, c.day, c._ts
       FROM   c
-      WHERE  c.tag = @tag
+      WHERE  c.tag           = @tag
          AND c.secondary_tag = @sec
-         AND c.tertiary_tag = @ter
-         AND c.year = @yr
-         AND c.month = @mon
-      ORDER BY c.day DESC, c._ts DESC
+         AND c.tertiary_tag  = @ter
+         AND c.year          = @yr
+         AND c.month         = @mon
     """
     params = [
         {"name": "@tag",  "value": _TAG},
@@ -79,11 +85,18 @@ def _latest_timetable_doc(lcsd_number: str, year: int, month: int) -> Optional[D
                 enable_cross_partition_query=False,
             )
         )
-        return docs[0]["data"] if docs else None
     except CosmosHttpResponseError as exc:
-        # log-stream friendly and visible to the caller
-        detail = f"Cosmos DB error {exc.status_code}: {exc.message}"
-        raise HTTPException(status_code=502, detail=detail) from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Cosmos DB error {exc.status_code}: {exc.message}",
+        ) from exc
+
+    if not docs:
+        return None
+
+    # newest = highest day, then highest _ts
+    docs.sort(key=lambda d: (int(d.get("day", 0)), int(d.get("_ts", 0))), reverse=True)
+    return docs[0]["data"]
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -205,7 +218,7 @@ class AvailabilityRequest(BaseModel):
         None, description="HH:MM[:SS]-HH:MM[:SS]  (same-day period query)"
     )
 
-    model_config = ConfigDict(populate_by_name=True)    # ← allow alias → attribute
+    model_config = ConfigDict(populate_by_name=True)    # allow alias → attribute
 
 router = APIRouter()
 
