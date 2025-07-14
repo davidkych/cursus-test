@@ -174,9 +174,9 @@ def lcsd_af_excel_timetable(
         ) from exc
 
     today   = _today_hkt()
-    saved   = 0             # JSON docs written
-    skipped = 0             # worksheets/pages skipped after both attempts
-    errors  = []            # detailed error log
+    saved   = 0                      # JSON docs written
+    errors  = []                     # detailed error log
+    skipped_details: List[Dict[str, Any]] = []   # why each worksheet/page skipped
 
     for fac in avail_data.get("facilities", []):
         fac_info = {
@@ -188,11 +188,20 @@ def lcsd_af_excel_timetable(
             excel_url = sched.get("excel_url")
             pdf_url   = sched.get("pdf_url")
             mm        = sched.get("month_year")
+
+            # ── guard: nothing to fetch ─────────────────────────────────────
             if not mm or (not excel_url and not pdf_url):
+                skipped_details.append(
+                    {
+                        **fac_info,
+                        "month_year": mm,
+                        "reason": "No month_year or links present",
+                    }
+                )
                 continue
 
             parsed: List[Dict[str, Any]] = []
-            # 1️⃣ try Excel first ------------------------------------------------
+            # 1️⃣ try Excel first --------------------------------------------
             if excel_url:
                 try:
                     parsed = excel_to_timetable(
@@ -202,11 +211,12 @@ def lcsd_af_excel_timetable(
                         debug=debug,
                     )
                 except Exception as exc:        # noqa: BLE001
-                    errors.append(
-                        {"type": "excel", "url": excel_url, "error": str(exc)}
-                    )
+                    err_txt = str(exc)
+                    errors.append({"type": "excel", "url": excel_url, "error": err_txt})
+                    if debug:
+                        print(f"[ERROR] Excel fail → {err_txt}")
 
-            # 2️⃣ fallback to PDF if Excel failed ------------------------------
+            # 2️⃣ fallback to PDF if Excel failed ----------------------------
             if not parsed and pdf_url:
                 try:
                     parsed = pdf_to_timetable(
@@ -216,37 +226,46 @@ def lcsd_af_excel_timetable(
                         debug=debug,
                     )
                 except Exception as exc:        # noqa: BLE001
-                    errors.append(
-                        {"type": "pdf", "url": pdf_url, "error": str(exc)}
-                    )
+                    err_txt = str(exc)
+                    errors.append({"type": "pdf", "url": pdf_url, "error": err_txt})
+                    if debug:
+                        print(f"[ERROR] PDF fail → {err_txt}")
 
-            # 3️⃣ persist or record skip ---------------------------------------
+            # 3️⃣ persist or record skip -------------------------------------
             if parsed:
                 for sheet in parsed:
                     payload = {**fac_info, **sheet}
                     _save_record(payload, today)
                     saved += 1
             else:
-                skipped += 1
+                skipped_details.append(
+                    {
+                        **fac_info,
+                        "month_year": mm,
+                        "excel_url":  excel_url,
+                        "pdf_url":    pdf_url,
+                        "reason":     "No timetable parsed (Excel &/or PDF failed)",
+                    }
+                )
 
-    # ── build response first ──────────────────────────────────────────────────
+    # ── assemble response ───────────────────────────────────────────────────
     resp: Dict[str, Any] = {
         "status":        "success",
         "timestamp_hkt": datetime.now(ZoneInfo("Asia/Hong_Kong"))
                              .isoformat(timespec="seconds"),
         "docs_saved":    saved,
-        "docs_skipped":  skipped,
+        "docs_skipped":  len(skipped_details),
+        "skipped_details": skipped_details,
         "errors":        errors,
     }
 
-    # ── fire-and-forget clean-up / validator scheduler ───────────────────────
+    # ── fire-and-forget clean-up / validator scheduler (unchanged) ───────────
     try:
         requests.post(
             f"{_internal_base()}/api/lcsd/lcsd_cleanup_validator_scheduler",
             timeout=5,
         )
     except Exception:
-        # non-blocking by design – swallow any error
-        pass
+        pass  # non-blocking
 
     return resp
