@@ -25,18 +25,20 @@ param appName string
 @description('Durable-scheduler function name')
 param schedFuncName string
 
-// ── NEW ─────────────────────────────────────────────────────────────
 @description('Azure AD tenant ID')
 param aadTenantId string
 
 @description('Azure AD application (client) ID')
 param aadClientId string
-// ────────────────────────────────────────────────────────────────────
 
+// ---------------------------------------------------------------------------
+// Derived values
+// ---------------------------------------------------------------------------
 var schedulerBaseUrl = 'https://${schedFuncName}.azurewebsites.net'
-var openIdIssuer      = 'https://login.microsoftonline.com/${aadTenantId}/v2.0'
 
-// —————————————————— Web-App ————————————————————————————————
+// ---------------------------------------------------------------------------
+// App Service (Linux)  -------------------------------------------------------
+// ---------------------------------------------------------------------------
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
@@ -61,19 +63,24 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
   }
 }
 
-// —————————————————— Easy Auth ————————————————————————————————
-// Keeps all existing endpoints public but enables AAD sign-in.
+// ---------------------------------------------------------------------------
+// Easy Auth v2  (allows anonymous; enables AAD sign-in) -----------------------
+// ---------------------------------------------------------------------------
 resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
   name: '${app.name}/authsettingsV2'
   properties: {
-    platformEnabled: true
-    unauthenticatedClientAction: 'AllowAnonymous'
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'AllowAnonymous'
+    }
     identityProviders: {
       azureActiveDirectory: {
         enabled: true
         registration: {
-          clientId:     aadClientId
-          openIdIssuer: openIdIssuer
+          clientId: aadClientId
+          openIdIssuer: 'https://login.microsoftonline.com/${aadTenantId}/v2.0'
         }
         validation: {
           allowedAudiences: [
