@@ -1,66 +1,36 @@
-<script setup>
-import { reactive } from 'vue'
-import { useRouter } from 'vue-router'
-import { mdiAccount, mdiAsterisk } from '@mdi/js'
-import SectionFullScreen from '@/components/SectionFullScreen.vue'
-import CardBox from '@/components/CardBox.vue'
-import FormCheckRadio from '@/components/FormCheckRadio.vue'
-import FormField from '@/components/FormField.vue'
-import FormControl from '@/components/FormControl.vue'
-import BaseButton from '@/components/BaseButton.vue'
-import BaseButtons from '@/components/BaseButtons.vue'
-import LayoutGuest from '@/layouts/LayoutGuest.vue'
-
-const form = reactive({
-  login: 'john.doe',
-  pass: 'highly-secure-password-fYjUw-',
-  remember: true,
-})
-
-const router = useRouter()
-
-const submit = () => {
-  router.push('/dashboard')
-}
-</script>
-
 <template>
   <LayoutGuest>
-    <SectionFullScreen v-slot="{ cardClass }" bg="purplePink">
-      <CardBox :class="cardClass" is-form @submit.prevent="submit">
-        <FormField label="Login" help="Please enter your login">
-          <FormControl
-            v-model="form.login"
-            :icon="mdiAccount"
-            name="login"
-            autocomplete="username"
-          />
-        </FormField>
-
-        <FormField label="Password" help="Please enter your password">
-          <FormControl
-            v-model="form.pass"
-            :icon="mdiAsterisk"
-            type="password"
-            name="password"
-            autocomplete="current-password"
-          />
-        </FormField>
-
-        <FormCheckRadio
-          v-model="form.remember"
-          name="remember"
-          label="Remember"
-          :input-value="true"
-        />
-
-        <template #footer>
-          <BaseButtons>
-            <BaseButton type="submit" color="info" label="Login" />
-            <BaseButton to="/dashboard" color="info" outline label="Back" />
-          </BaseButtons>
-        </template>
+    <!-- Full-screen coloured background (keeps Admin One styling) -->
+    <SectionFullScreen bg="purplePink">
+      <!-- Simple status card centred on the screen -->
+      <CardBox class="text-center py-16">
+        <p class="text-lg font-semibold">Redirecting to login…</p>
       </CardBox>
     </SectionFullScreen>
   </LayoutGuest>
 </template>
+
+<script setup>
+import { onMounted } from 'vue'
+
+import SectionFullScreen from '@/components/SectionFullScreen.vue'
+import CardBox           from '@/components/CardBox.vue'
+import LayoutGuest       from '@/layouts/LayoutGuest.vue'
+
+/* ------------------------------------------------------------------
+ * Configure Easy-Auth redirect.
+ * Keep values in constants so they aren’t hard-coded throughout
+ * the codebase and are easy to change later.
+ * ---------------------------------------------------------------- */
+const AUTH_PROVIDER        = 'aad'   // Azure AD provider alias
+const POST_LOGIN_REDIRECT  = '/'     // where Azure SWA sends the user back
+
+/* ------------------------------------------------------------------
+ * Redirect immediately after the component is mounted.
+ * ---------------------------------------------------------------- */
+onMounted(() => {
+  window.location.href =
+    `/.auth/login/${AUTH_PROVIDER}?post_login_redirect_uri=` +
+    encodeURIComponent(POST_LOGIN_REDIRECT)
+})
+</script>

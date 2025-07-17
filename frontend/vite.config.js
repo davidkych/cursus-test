@@ -3,12 +3,12 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import vueDevTools from 'vite-plugin-vue-devtools'
-
 import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: "/admin-one-vue-tailwind/",
+  // Serve and build the app at the root URL – no sub-folder prefix
+  base: '/',
   plugins: [vue(), vueDevTools(), tailwindcss()],
   resolve: {
     alias: {
