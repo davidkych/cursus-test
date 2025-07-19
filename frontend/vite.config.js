@@ -8,7 +8,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
-  base: "/admin-one-vue-tailwind/",
+  base: "/",
   plugins: [vue(), vueDevTools(), tailwindcss()],
   resolve: {
     alias: {
