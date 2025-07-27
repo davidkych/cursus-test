@@ -22,7 +22,17 @@ param containerName string
 @description('Name of the FastAPI app (for callback URL)')
 param appName string
 
+// ─────────────────────────────────────────────────────────────
+// Storage account for the Function App
+// ─────────────────────────────────────────────────────────────
 var schedStorageName = '${toLower(replace(schedulerFunctionName, '-', ''))}sa${substring(uniqueString(resourceGroup().id), 0, 6)}'
+
+// ▶ NEW — valid share name (letters & numbers only, 3-63 chars)
+//   Consecutive dashes in the original function name break the
+//   WEBSITE_CONTENTSHARE rule, so we strip *all* dashes.
+var schedContentShare = toLower(replace(schedulerFunctionName, '-', ''))
+
+// Storage account
 resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name:     schedStorageName
   location: location
@@ -40,6 +50,7 @@ resource schedStorage 'Microsoft.Storage/storageAccounts@2023-01-01' = {
 var schedStorageKey        = schedStorage.listKeys().keys[0].value
 var schedStorageConnection = 'DefaultEndpointsProtocol=https;AccountName=${schedStorage.name};AccountKey=${schedStorageKey};EndpointSuffix=${environment().suffixes.storage}'
 
+// Function App
 resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   name: schedulerFunctionName
   location: location
@@ -57,7 +68,7 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'WEBSITES_ENABLE_APP_SERVICE_STORAGE',      value: 'true' }
         { name: 'AzureWebJobsStorage',                      value: schedStorageConnection }
         { name: 'WEBSITE_CONTENTAZUREFILECONNECTIONSTRING', value: schedStorageConnection }
-        { name: 'WEBSITE_CONTENTSHARE',                     value: toLower(schedulerFunctionName) }
+        { name: 'WEBSITE_CONTENTSHARE',                     value: schedContentShare }  // ← CHANGED
         { name: 'COSMOS_ENDPOINT',                          value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                          value: databaseName }
         { name: 'COSMOS_CONTAINER',                         value: containerName }
@@ -71,6 +82,7 @@ resource schedFunc 'Microsoft.Web/sites@2023-01-01' = {
   ]
 }
 
+// Diagnostic settings (unchanged)
 resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   name:  '${schedulerFunctionName}-diag'
   scope: schedFunc
@@ -92,4 +104,4 @@ resource schedFuncDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview
 }
 
 output schedulerFunctionName string = schedFunc.name
-output schedulerStorageName    string = schedStorage.name
+output schedulerStorageName  string = schedStorage.name

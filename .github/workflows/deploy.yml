@@ -8,25 +8,23 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents:  read
 
-env:
-  RG:       cursus-test-rg
+env:                     # only global, non-derived constants here
   LOCATION: eastasia
-  APP:      cursus-test-app
   PLAN_SKU: B1
-  TIMEOUT:  1800          # seconds
+  TIMEOUT:  1800         # seconds
 
 jobs:
   # ─────────────────────────── infra ───────────────────────────
   infra:
     uses: ./.github/workflows/infra.yml
     with:
-      RG:       cursus-test-rg
+      PREFIX:   cursus-test1         # ← single source-of-truth for all names
       LOCATION: eastasia
       PLAN_SKU: B1
       TIMEOUT:  1800
-    secrets:                         # ← AAD secrets no longer needed
+    secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
@@ -35,8 +33,8 @@ jobs:
     needs: infra
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:         cursus-test-rg
-      APP:        cursus-test-app
+      RG:         ${{ needs.infra.outputs.rg }}
+      APP:        ${{ needs.infra.outputs.app }}
       TIMEOUT:    1800
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
@@ -48,8 +46,8 @@ jobs:
     needs: infra
     uses: ./.github/workflows/scheduler.yml
     with:
-      RG:         cursus-test-rg
-      APP:        cursus-test-app
+      RG:         ${{ needs.infra.outputs.rg }}
+      APP:        ${{ needs.infra.outputs.app }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
@@ -60,7 +58,7 @@ jobs:
     needs: infra
     uses: ./.github/workflows/static-web.yml
     with:
-      RG:               cursus-test-rg
+      RG:               ${{ needs.infra.outputs.rg }}
       STATIC_SITE_NAME: ${{ needs.infra.outputs.static_site }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}

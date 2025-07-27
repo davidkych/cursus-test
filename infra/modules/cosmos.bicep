@@ -26,9 +26,9 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
 
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2021-04-15' = {
   parent: cosmos
-  name:   'cursusdb'
+  name:   'cursus-test1db'
   properties: {
-    resource: { id: 'cursusdb' }
+    resource: { id: 'cursus-test1db' }
     options:  { throughput: 400 }
   }
 }
@@ -76,5 +76,5 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
 
 output cosmosAccountName string   = cosmos.name
 output cosmosEndpoint    string   = cosmos.properties.documentEndpoint
-output databaseName      string   = 'cursusdb'
+output databaseName      string   = 'cursus-test1db'
 output containerName     string   = 'jsonContainer'

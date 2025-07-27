@@ -4,7 +4,7 @@ name: Infra Reusable
 on:
   workflow_call:
     inputs:
-      RG:        { required: true, type: string }
+      PREFIX:    { required: true, type: string }   # ← NEW
       LOCATION:  { required: true, type: string }
       PLAN_SKU:  { required: true, type: string }
       TIMEOUT:   { required: true, type: number }
@@ -12,6 +12,12 @@ on:
       AZURE_CREDENTIALS:     { required: true }
       AZURE_SUBSCRIPTION_ID: { required: true }
     outputs:
+      rg:
+        description: 'Resource-group name'
+        value: ${{ jobs.provision.outputs.rg }}
+      app:
+        description: 'Web-App name'
+        value: ${{ jobs.provision.outputs.app }}
       cosmos:
         description: 'Cosmos DB account name'
         value: ${{ jobs.provision.outputs.cosmos }}
@@ -25,7 +31,12 @@ on:
 jobs:
   provision:
     runs-on: ubuntu-latest
+    env:                               # computed once – reused everywhere
+      PREFIX: ${{ inputs.PREFIX }}
+      RG:     ${{ inputs.PREFIX }}-rg
     outputs:
+      rg:          ${{ env.RG }}
+      app:         ${{ steps.infra.outputs.app }}
       cosmos:      ${{ steps.infra.outputs.cosmos }}
       sched_func:  ${{ steps.infra.outputs.sched_func }}
       static_site: ${{ steps.infra.outputs.static_site }}
@@ -38,20 +49,30 @@ jobs:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
-      # ── NEW: ensure or create AAD app registration ────────────────
+      # ── Ensure the resource-group exists (idempotent) ──────────────
+      - name: Ensure resource group exists
+        shell: bash
+        run: |
+          set -eo pipefail
+          az group create \
+            --name     "$RG" \
+            --location "${{ inputs.LOCATION }}"
+
+      # ── Ensure or create AAD app registration ──────────────────────
       - name: Ensure AAD app registration
         id: aad
         shell: bash
         run: |
           set -eo pipefail
           TENANT_ID=$(az account show --query tenantId -o tsv)
-          APP_NAME="cursus-test-aad"
+          APP_NAME="${PREFIX}-aad"
           CLIENT_ID=$(az ad app list --display-name "$APP_NAME" --query "[0].appId" -o tsv)
 
           if [[ -z "$CLIENT_ID" ]]; then
-            CLIENT_ID=$(az ad app create --display-name "$APP_NAME" \
-                        --sign-in-audience AzureADMyOrg \
-                        --query appId -o tsv)
+            CLIENT_ID=$(az ad app create \
+                          --display-name "$APP_NAME" \
+                          --sign-in-audience AzureADMyOrg \
+                          --query appId -o tsv)
             echo "Created AAD app registration $APP_NAME ($CLIENT_ID)"
           else
             echo "Re-using existing AAD app $APP_NAME ($CLIENT_ID)"
@@ -64,29 +85,34 @@ jobs:
       # ── Deploy all infra (Bicep) ───────────────────────────────────
       - name: Deploy Bicep infra
         id: infra
+        shell: bash
         run: |
           set -eo pipefail
           DEPLOY_NAME=gh-${{ github.run_id }}
 
           az deployment group create \
-            --name $DEPLOY_NAME \
-            --resource-group ${{ inputs.RG }} \
+            --name          $DEPLOY_NAME \
+            --resource-group "$RG" \
             --template-file infra/main.bicep \
             --parameters \
+              prefix=${PREFIX} \
               planSkuName=${{ inputs.PLAN_SKU }} \
               timeout=${{ inputs.TIMEOUT }} \
               aadTenantId=${{ steps.aad.outputs.tenant_id }} \
               aadClientId=${{ steps.aad.outputs.client_id }}
 
-          COSMOS=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+          COSMOS=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)
-          SCHED=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+          SCHED=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.schedulerFunctionName.value" -o tsv)
-          STATIC=$(az deployment group show -g ${{ inputs.RG }} -n $DEPLOY_NAME \
+          STATIC=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.staticSiteName.value" -o tsv)
+          APP=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
+                     --query "properties.outputs.webAppName.value" -o tsv)
 
           echo "cosmos=$COSMOS"      >> $GITHUB_OUTPUT
           echo "sched_func=$SCHED"   >> $GITHUB_OUTPUT
           echo "static_site=$STATIC" >> $GITHUB_OUTPUT
+          echo "app=$APP"            >> $GITHUB_OUTPUT
 
-          echo "🏗 infra ready – cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"
+          echo "🏗 infra ready – rg=$RG, app=$APP, cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"

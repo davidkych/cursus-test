@@ -32,7 +32,7 @@
     }
   },
   "variables": {
-    "appName": "cursus-app",
+    "appName": "cursus-test2-app",
     "planName": "[format('{0}-plan', variables('appName'))]",
     "cosmosAccountNameBase": "[toLower(replace(variables('appName'), '-', ''))]",
     "cosmosAccountName": "[format('{0}{1}', variables('cosmosAccountNameBase'), substring(uniqueString(resourceGroup().id), 0, 6))]"
@@ -71,10 +71,10 @@
     {
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
       "apiVersion": "2021-04-15",
-      "name": "[format('{0}/{1}', variables('cosmosAccountName'), 'cursusdb')]",
+      "name": "[format('{0}/{1}', variables('cosmosAccountName'), 'cursus-test2db')]",
       "properties": {
         "resource": {
-          "id": "cursusdb"
+          "id": "cursus-test2db"
         },
         "options": {
           "throughput": 400
@@ -87,7 +87,7 @@
     {
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
       "apiVersion": "2021-04-15",
-      "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), 'cursusdb', 'jsonContainer')]",
+      "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), 'cursus-test2db', 'jsonContainer')]",
       "properties": {
         "resource": {
           "id": "jsonContainer",
@@ -101,7 +101,7 @@
         "options": {}
       },
       "dependsOn": [
-        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosAccountName'), 'cursusdb')]"
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosAccountName'), 'cursus-test2db')]"
       ]
     },
     {
@@ -134,7 +134,7 @@
             },
             {
               "name": "COSMOS_DATABASE",
-              "value": "cursusdb"
+              "value": "cursus-test2db"
             },
             {
               "name": "COSMOS_CONTAINER",
