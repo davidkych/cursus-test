@@ -40,6 +40,7 @@ jobs:
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      JWT_SECRET:        ${{ secrets.JWT_SECRET }}   # ⟨NEW⟩
 
   # ───────────────────────── scheduler ─────────────────────────
   scheduler:
