@@ -7,8 +7,14 @@ param location string
 @description('Name of the app (for account naming)')
 param appName string
 
+// ---------------------------------------------------------------------------
+// Account name – keep it short & globally unique
+// ---------------------------------------------------------------------------
 var cosmosAccountName = '${toLower(replace(appName, '-', ''))}${substring(uniqueString(resourceGroup().id), 0, 6)}'
 
+// ---------------------------------------------------------------------------
+// Cosmos DB account
+// ---------------------------------------------------------------------------
 resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   name:     cosmosAccountName
   location: location
@@ -24,6 +30,9 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Single SQL database (400 RU/s – shared)
+// ---------------------------------------------------------------------------
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2021-04-15' = {
   parent: cosmos
   name:   'cursus-test1db'
@@ -33,7 +42,10 @@ resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2021-04-15
   }
 }
 
-resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+// ---------------------------------------------------------------------------
+// Existing JSON container
+// ---------------------------------------------------------------------------
+resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
   name:   'jsonContainer'
   properties: {
@@ -43,10 +55,6 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
         paths: [ '/tag' ]
         kind:  'Hash'
       }
-      // ────────────────────────────────────────────────────────────────
-      // Composite index to support:
-      //   ORDER BY c.day DESC, c._ts DESC
-      // ────────────────────────────────────────────────────────────────
       indexingPolicy: {
         automatic: true
         indexingMode: 'consistent'
@@ -58,14 +66,8 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
         ]
         compositeIndexes: [
           [
-            {
-              path: '/day'
-              order: 'descending'
-            }
-            {
-              path: '/_ts'
-              order: 'descending'
-            }
+            { path: '/day', order: 'descending' }
+            { path: '/_ts', order: 'descending' }
           ]
         ]
       }
@@ -74,7 +76,35 @@ resource cosmosContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/con
   }
 }
 
-output cosmosAccountName string   = cosmos.name
-output cosmosEndpoint    string   = cosmos.properties.documentEndpoint
-output databaseName      string   = 'cursus-test1db'
-output containerName     string   = 'jsonContainer'
+// ---------------------------------------------------------------------------
+// ✨ NEW: Users container (shared RU/s)
+// ---------------------------------------------------------------------------
+resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+  parent: cosmosDb
+  name:   'users'
+  properties: {
+    resource: {
+      id: 'users'
+      partitionKey: {
+        paths: [ '/username' ]   // fast point-reads
+        kind:  'Hash'
+      }
+      // Enforce unique username & e-mail
+      uniqueKeyPolicy: {
+        uniqueKeys: [
+          { paths: [ '/username' ] }
+          { paths: [ '/email'    ] }
+        ]
+      }
+    }
+    options: {}                  // inherit DB throughput (cheapest)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Outputs
+// ---------------------------------------------------------------------------
+output cosmosAccountName string = cosmos.name
+output cosmosEndpoint    string = cosmos.properties.documentEndpoint
+output databaseName      string = 'cursus-test1db'
+output containerName     string = 'jsonContainer'

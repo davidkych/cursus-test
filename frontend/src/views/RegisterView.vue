@@ -19,10 +19,16 @@ import BaseButton from '@/components/BaseButton.vue'
 import BaseButtons from '@/components/BaseButtons.vue'
 import LayoutGuest from '@/layouts/LayoutGuest.vue'
 
+/* ─────────────────────── static country list ──────────────────────── */
+import countries from '@/assets/countries.json'          // ← NEW
+const countryOptions = ref(countries)                    // ← NEW
+
+/* ────────────────────────── form model ─────────────────────────────── */
 const form = reactive({
   username: '',
   gender: '',
   dob: '',
+  country: '',                                           // ISO-3166-1 α-3
   password: '',
   passwordConfirm: '',
   email: '',
@@ -30,7 +36,8 @@ const form = reactive({
   acceptedTerms: false,
 })
 
-const router = useRouter()
+/* ────────────────────────── submit logic ───────────────────────────── */
+const router   = useRouter()
 const errorMsg = ref('')
 
 const submit = () => {
@@ -52,6 +59,10 @@ const submit = () => {
     errorMsg.value = 'Please enter your date of birth'
     return
   }
+  if (!form.country) {
+    errorMsg.value = 'Please select your country'
+    return
+  }
   if (!form.acceptedTerms) {
     errorMsg.value = 'Please accept the terms & conditions'
     return
@@ -66,6 +77,7 @@ const submit = () => {
   <LayoutGuest>
     <SectionFullScreen v-slot="{ cardClass }" bg="purplePink">
       <CardBox :class="cardClass" is-form @submit.prevent="submit">
+        <!-- error banner -->
         <template v-if="errorMsg">
           <div class="mb-4 flex items-center text-sm text-red-600">
             <BaseButton
@@ -108,6 +120,16 @@ const submit = () => {
             :icon="mdiCalendar"
             type="date"
             name="dob"
+            required
+          />
+        </FormField>
+
+        <!-- COUNTRY -->
+        <FormField label="Country">
+          <FormControl
+            v-model="form.country"
+            :options="countryOptions"
+            placeholder="Select a country"
             required
           />
         </FormField>
@@ -169,6 +191,7 @@ const submit = () => {
           :icon="mdiCheck"
         />
 
+        <!-- buttons -->
         <template #footer>
           <BaseButtons>
             <BaseButton type="submit" color="info" label="Register" />

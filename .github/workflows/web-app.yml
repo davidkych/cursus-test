@@ -11,6 +11,7 @@ on:
       SCHED_FUNC:  { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
+      JWT_SECRET:        { required: true }    # ← NEW
 
 jobs:
   deploy-web-app:
@@ -41,13 +42,8 @@ jobs:
             sleep $((attempt*15))
           done
 
-          # make vendored packages visible
           export PYTHONPATH="$PWD/src/.python_packages${PYTHONPATH:+:$PYTHONPATH}"
-
-          # sanity-check dependency tree
           python -m pip check
-
-          # verify critical imports
           python - <<'PY'
           import importlib, sys
           for pkg in ("uvicorn", "fastapi", "gunicorn"):
@@ -86,10 +82,11 @@ jobs:
       # ── App settings -------------------------------------------------------
       - name: Configure Web-App settings
         shell: bash
+        env:
+          JWT_SECRET:        ${{ secrets.JWT_SECRET }}
         run: |
           set -eo pipefail
 
-          # build a JSON file so we never fight shell-quoting again
           cat > appsettings.json <<JSON
           {
             "WEBSITE_RUN_FROM_PACKAGE":               "0",
@@ -99,22 +96,23 @@ jobs:
             "WEBSITES_CONTAINER_START_TIME_LIMIT":    "${{ inputs.TIMEOUT }}",
             "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
             "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
-            "SCM_LOGSTREAM_TIMEOUT":                  "240"
+            "SCM_LOGSTREAM_TIMEOUT":                  "240",
+            "JWT_SECRET":                             "$JWT_SECRET",
+            "USERS_CONTAINER":                        "users"
           }
           JSON
 
-          # apply the settings in one atomic call
           az webapp config appsettings set \
             -g ${{ inputs.RG }} \
             -n ${{ inputs.APP }} \
             --settings @"appsettings.json"
 
-          # keep the auxiliary switches
           az webapp config set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --always-on true
           az webapp log config -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
             --application-logging filesystem \
             --detailed-error-messages true \
             --failed-request-tracing true
+
       # ── Wait for restart after settings change -----------------------------
       - name: Wait for web-app to finish restarting
         shell: bash
@@ -128,6 +126,7 @@ jobs:
             sleep 5
           done
           echo "⚠ still not healthy after 3 min – continuing"
+
       # ── ZIP deploy ---------------------------------------------------------
       - name: ZIP-deploy FastAPI web-app
         shell: bash
@@ -162,7 +161,7 @@ jobs:
         run: |
           set -eo pipefail
           echo "🔍 Final health probe …"
-          for i in {1..30}; do      # up to 150 s
+          for i in {1..30}; do
             code=$(curl -s -o /dev/null -w '%{http_code}' \
                      "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
             [[ "$code" == "200" ]] && { echo "✅ health check passed"; exit 0; }
