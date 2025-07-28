@@ -1,18 +1,16 @@
 import {
   mdiAccountCircle,
   mdiMonitor,
-  mdiGithub,
-  mdiLock,
-  mdiAlertCircle,
   mdiSquareEditOutline,
   mdiTable,
-  mdiViewList,
   mdiTelevisionGuide,
-  mdiResponsive,
-  mdiPalette,
-  mdiReact,
+  mdiViewList,
 } from '@mdi/js'
 
+/**
+ * Main (non-admin) sidebar menu
+ * — keep ONLY the items requested
+ */
 export default [
   {
     to: '/dashboard',
@@ -21,66 +19,30 @@ export default [
   },
   {
     to: '/tables',
-    label: 'Tables',
     icon: mdiTable,
+    label: 'Tables',
   },
   {
     to: '/forms',
-    label: 'Forms',
     icon: mdiSquareEditOutline,
+    label: 'Forms',
   },
   {
     to: '/ui',
-    label: 'UI',
     icon: mdiTelevisionGuide,
-  },
-  {
-    to: '/responsive',
-    label: 'Responsive',
-    icon: mdiResponsive,
-  },
-  {
-    to: '/',
-    label: 'Styles',
-    icon: mdiPalette,
+    label: 'UI',
   },
   {
     to: '/profile',
-    label: 'Profile',
     icon: mdiAccountCircle,
-  },
-  {
-    to: '/login',
-    label: 'Login',
-    icon: mdiLock,
-  },
-  {
-    to: '/error',
-    label: 'Error',
-    icon: mdiAlertCircle,
+    label: 'Profile',
   },
   {
     label: 'Dropdown',
     icon: mdiViewList,
     menu: [
-      {
-        label: 'Item One',
-      },
-      {
-        label: 'Item Two',
-      },
+      { label: 'Item One' },
+      { label: 'Item Two' },
     ],
-  },
-  {
-    href: 'https://github.com/justboil/admin-one-vue-tailwind',
-    label: 'GitHub',
-    icon: mdiGithub,
-    target: '_blank',
-  },
-  {
-    href: 'https://github.com/justboil/admin-one-react-tailwind',
-    label: 'React version',
-    icon: mdiReact,
-    target: '_blank',
   },
 ]

@@ -70,6 +70,12 @@ const routes = [
     component: () => import('@/views/LoginView.vue'),
   },
   {
+    meta: { title: 'Register' },          // ← NEW
+    path: '/register',                    // ← NEW
+    name: 'register',                     // ← NEW
+    component: () => import('@/views/RegisterView.vue'), // ← NEW
+  },
+  {
     meta: {
       title: 'Error',
     },
