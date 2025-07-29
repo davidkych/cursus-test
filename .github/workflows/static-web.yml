@@ -7,6 +7,7 @@ on:
     inputs:
       RG:                 { required: true, type: string }
       STATIC_SITE_NAME:   { required: true, type: string }
+      APP:                { required: true, type: string }   # ← NEW
     secrets:
       AZURE_CREDENTIALS:  { required: true }
 
@@ -20,17 +21,24 @@ jobs:
     env:
       RG:               ${{ inputs.RG }}
       STATIC_SITE_NAME: ${{ inputs.STATIC_SITE_NAME }}
+      APP:              ${{ inputs.APP }}
 
     steps:
       - uses: actions/checkout@v3
 
-      # ── Azure login via the existing service-principal secret ───────────────
+      # ── Inject API base URL for production build ──────────────────────────
+      - name: Write .env.production
+        working-directory: frontend
+        run: |
+          echo "VITE_API_BASE=https://${APP}.azurewebsites.net" > .env.production
+
+      # ── Azure login via the existing service-principal secret ─────────────
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
-      # ── Build the Vue front-end ────────────────────────────────────────────
+      # ── Build the Vue front-end ───────────────────────────────────────────
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -45,7 +53,7 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      # ── Fetch a short-lived deployment token directly from Azure ───────────
+      # ── Fetch a short-lived deployment token directly from Azure ──────────
       - name: Obtain Static Web App deployment token
         id: swa_token
         uses: azure/CLI@v2
@@ -59,7 +67,7 @@ jobs:
             echo "::add-mask::$TOKEN"
             echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
 
-      # ── Deploy ─────────────────────────────────────────────────────────────
+      # ── Deploy ────────────────────────────────────────────────────────────
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1          # pinned
         with:
@@ -68,4 +76,3 @@ jobs:
           action: upload
           app_location:    frontend
           output_location: dist
-

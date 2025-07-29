@@ -53,7 +53,6 @@ jobs:
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-
   # ──────────────────────── static-web ─────────────────────────
   static_web:
     needs: infra
@@ -61,5 +60,6 @@ jobs:
     with:
       RG:               ${{ needs.infra.outputs.rg }}
       STATIC_SITE_NAME: ${{ needs.infra.outputs.static_site }}
+      APP:              ${{ needs.infra.outputs.app }}       # ← NEW
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
