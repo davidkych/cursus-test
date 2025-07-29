@@ -11,7 +11,7 @@ on:
       SCHED_FUNC:  { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
-      JWT_SECRET:        { required: true }    # ← NEW
+      JWT_SECRET:        { required: true }
 
 jobs:
   deploy-web-app:
@@ -31,10 +31,12 @@ jobs:
           set -eo pipefail
           python -m pip install --upgrade pip
 
+          VENV="src/.python_packages/lib/site-packages"          # ← NEW (Azure-expected path)
+
           for attempt in 1 2 3; do
             echo "📦 pip install attempt $attempt"
             if python -m pip install --no-cache-dir --progress-bar off \
-                 --target src/.python_packages \
+                 --target "$VENV" \
                  -r src/requirements.txt; then
               break
             fi
@@ -42,7 +44,7 @@ jobs:
             sleep $((attempt*15))
           done
 
-          export PYTHONPATH="$PWD/src/.python_packages${PYTHONPATH:+:$PYTHONPATH}"
+          export PYTHONPATH="$PWD/$VENV${PYTHONPATH:+:$PYTHONPATH}"   # ← NEW
           python -m pip check
           python - <<'PY'
           import importlib, sys
@@ -83,7 +85,7 @@ jobs:
       - name: Configure Web-App settings
         shell: bash
         env:
-          JWT_SECRET:        ${{ secrets.JWT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           set -eo pipefail
 
@@ -92,7 +94,7 @@ jobs:
             "WEBSITE_RUN_FROM_PACKAGE":               "0",
             "SCM_DO_BUILD_DURING_DEPLOYMENT":         "false",
             "WEBSITES_PORT":                          "8000",
-            "PYTHONPATH":                             "/home/site/wwwroot:/home/site/wwwroot/.python_packages",
+            "PYTHONPATH":                             "/home/site/wwwroot/.python_packages/lib/site-packages",
             "WEBSITES_CONTAINER_START_TIME_LIMIT":    "${{ inputs.TIMEOUT }}",
             "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
             "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
