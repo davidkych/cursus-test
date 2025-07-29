@@ -18,17 +18,17 @@ import FormControl from '@/components/FormControl.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import BaseButtons from '@/components/BaseButtons.vue'
 import LayoutGuest from '@/layouts/LayoutGuest.vue'
+import countries from '@/assets/countries.json'
+import { register as apiRegister } from '@/services/auth.js'   // ← NEW
 
-/* ─────────────────────── static country list ──────────────────────── */
-import countries from '@/assets/countries.json'          // ← NEW
-const countryOptions = ref(countries)                    // ← NEW
+const countryOptions = ref(countries)
 
 /* ────────────────────────── form model ─────────────────────────────── */
 const form = reactive({
   username: '',
   gender: '',
   dob: '',
-  country: '',                                           // ISO-3166-1 α-3
+  country: '',
   password: '',
   passwordConfirm: '',
   email: '',
@@ -39,37 +39,35 @@ const form = reactive({
 /* ────────────────────────── submit logic ───────────────────────────── */
 const router   = useRouter()
 const errorMsg = ref('')
+const loading  = ref(false)
 
-const submit = () => {
+const submit = async () => {
   errorMsg.value = ''
 
   if (form.password !== form.passwordConfirm) {
-    errorMsg.value = 'Passwords do not match'
-    return
+    errorMsg.value = 'Passwords do not match'; return
   }
   if (form.email !== form.emailConfirm) {
-    errorMsg.value = 'E-mails do not match'
-    return
+    errorMsg.value = 'E-mails do not match'; return
   }
-  if (!form.gender) {
-    errorMsg.value = 'Please select your gender'
-    return
-  }
-  if (!form.dob) {
-    errorMsg.value = 'Please enter your date of birth'
-    return
-  }
-  if (!form.country) {
-    errorMsg.value = 'Please select your country'
-    return
-  }
-  if (!form.acceptedTerms) {
-    errorMsg.value = 'Please accept the terms & conditions'
-    return
-  }
+  if (!form.gender)          { errorMsg.value = 'Please select your gender'; return }
+  if (!form.dob)             { errorMsg.value = 'Please enter your date of birth'; return }
+  if (!form.country)         { errorMsg.value = 'Please select your country'; return }
+  if (!form.acceptedTerms)   { errorMsg.value = 'Please accept the terms & conditions'; return }
 
-  // basic checks passed – navigate away (no real signup yet)
-  router.push('/dashboard')
+  loading.value = true
+  try {
+    await apiRegister({
+      username: form.username,
+      email:    form.email,
+      password: form.password,
+    })
+    router.push('/login')    // registration OK – go to login
+  } catch (e) {
+    errorMsg.value = e.message
+  } finally {
+    loading.value = false
+  }
 }
 </script>
 
@@ -194,7 +192,12 @@ const submit = () => {
         <!-- buttons -->
         <template #footer>
           <BaseButtons>
-            <BaseButton type="submit" color="info" label="Register" />
+            <BaseButton
+              type="submit"
+              color="info"
+              :label="loading ? 'Registering…' : 'Register'"
+              :disabled="loading"
+            />
             <BaseButton to="/login" color="info" outline label="Go to login" />
           </BaseButtons>
         </template>
