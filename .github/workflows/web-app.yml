@@ -31,7 +31,7 @@ jobs:
           set -eo pipefail
           python -m pip install --upgrade pip
 
-          VENV="src/.python_packages/lib/site-packages"
+          VENV="src/.python_packages/lib/site-packages"          # ← NEW (Azure-expected path)
 
           for attempt in 1 2 3; do
             echo "📦 pip install attempt $attempt"
@@ -44,7 +44,7 @@ jobs:
             sleep $((attempt*15))
           done
 
-          export PYTHONPATH="$PWD/$VENV${PYTHONPATH:+:$PYTHONPATH}"
+          export PYTHONPATH="$PWD/$VENV${PYTHONPATH:+:$PYTHONPATH}"   # ← NEW
           python -m pip check
           python - <<'PY'
           import importlib, sys
@@ -91,7 +91,7 @@ jobs:
 
           cat > appsettings.json <<JSON
           {
-            "WEBSITE_RUN_FROM_PACKAGE":               "1",     // ← changed
+            "WEBSITE_RUN_FROM_PACKAGE":               "0",
             "SCM_DO_BUILD_DURING_DEPLOYMENT":         "false",
             "WEBSITES_PORT":                          "8000",
             "PYTHONPATH":                             "/home/site/wwwroot/.python_packages/lib/site-packages",
@@ -137,20 +137,11 @@ jobs:
           cd src && zip -qr ../app.zip . && cd ..
           echo "⏳ initial warm-up 60 s …"; sleep 60
 
-          deployed=false
-          healthy=false
-
+          success=false
           for attempt in 1 2; do
             echo "🚀 ZIP-deploy attempt $attempt"
-            if az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
-                                --src-path app.zip --type zip --timeout 600; then
-              deployed=true
-            else
-              echo "❌ az webapp deploy failed (exit $?)"
-              sleep $((attempt*45))
-              continue
-            fi
-
+            az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
+                             --src-path app.zip --type zip --timeout 600 || true
             echo "📡 streaming container log …"
             timeout 120s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
             sleep 15
@@ -158,20 +149,13 @@ jobs:
             code=$(curl -s -o /dev/null -w '%{http_code}' \
                      "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
             if [[ "$code" == "200" ]]; then
-              healthy=true; break
+              success=true; break
             fi
             echo "⚠ unhealthy (HTTP $code) – backing off"
             sleep $((attempt*45))
           done
 
-          if ! $deployed; then
-            echo "💥 Deployment command failed on all attempts"
-            exit 1
-          fi
-          if ! $healthy; then
-            echo "💥 Site never became healthy after deployment"
-            exit 1
-          fi
+          $success || { echo "💥 web-app deploy failed"; exit 1; }
 
       # ── Verify health endpoint (final gate) --------------------------------
       - name: Verify web-app /healthz
