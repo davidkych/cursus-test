@@ -19,7 +19,7 @@ import BaseButton from '@/components/BaseButton.vue'
 import BaseButtons from '@/components/BaseButtons.vue'
 import LayoutGuest from '@/layouts/LayoutGuest.vue'
 import countries from '@/assets/countries.json'
-import { register as apiRegister } from '@/services/auth.js'   // ← NEW
+import { register as apiRegister } from '@/services/auth.js'
 
 const countryOptions = ref(countries)
 
@@ -44,17 +44,22 @@ const loading  = ref(false)
 const submit = async () => {
   errorMsg.value = ''
 
+  // ── client-side validations ─────────────────────────────────────────
   if (form.password !== form.passwordConfirm) {
     errorMsg.value = 'Passwords do not match'; return
   }
   if (form.email !== form.emailConfirm) {
     errorMsg.value = 'E-mails do not match'; return
   }
-  if (!form.gender)          { errorMsg.value = 'Please select your gender'; return }
-  if (!form.dob)             { errorMsg.value = 'Please enter your date of birth'; return }
-  if (!form.country)         { errorMsg.value = 'Please select your country'; return }
-  if (!form.acceptedTerms)   { errorMsg.value = 'Please accept the terms & conditions'; return }
+  if (!form.gender)        { errorMsg.value = 'Please select your gender'; return }
+  if (!form.dob)           { errorMsg.value = 'Please enter your date of birth'; return }
+  if (new Date(form.dob) > new Date()) {          // NEW
+    errorMsg.value = 'Date of birth must be in the past'; return
+  }
+  if (!form.country)       { errorMsg.value = 'Please select your country'; return }
+  if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
+  // ── call API ────────────────────────────────────────────────────────
   loading.value = true
   try {
     await apiRegister({
@@ -62,9 +67,12 @@ const submit = async () => {
       email:    form.email,
       password: form.password,
     })
-    router.push('/login')    // registration OK – go to login
-  } catch (e) {
-    errorMsg.value = e.message
+    router.push('/login')
+  } catch (err) {                                  // better error extraction
+    errorMsg.value =
+      err?.response?.data?.detail ??
+      err.message ??
+      'Registration failed'
   } finally {
     loading.value = false
   }
