@@ -53,7 +53,7 @@ const submit = async () => {
   }
   if (!form.gender)        { errorMsg.value = 'Please select your gender'; return }
   if (!form.dob)           { errorMsg.value = 'Please enter your date of birth'; return }
-  if (new Date(form.dob) > new Date()) {          // NEW
+  if (new Date(form.dob) > new Date()) {
     errorMsg.value = 'Date of birth must be in the past'; return
   }
   if (!form.country)       { errorMsg.value = 'Please select your country'; return }
@@ -68,11 +68,27 @@ const submit = async () => {
       password: form.password,
     })
     router.push('/login')
-  } catch (err) {                                  // better error extraction
-    errorMsg.value =
-      err?.response?.data?.detail ??
-      err.message ??
-      'Registration failed'
+  } catch (err) {
+    /* ── extract a human-readable error message ─────────────────────── */
+    let message = 'Registration failed'
+
+    const detail = err?.response?.data?.detail
+    if (detail) {
+      if (typeof detail === 'string') {
+        message = detail
+      } else if (Array.isArray(detail)) {
+        // FastAPI validation error list
+        message = detail
+          .map(e => e.msg ?? JSON.stringify(e))
+          .join(' • ')
+      } else if (typeof detail === 'object') {
+        message = JSON.stringify(detail)
+      }
+    } else if (err.message) {
+      message = err.message
+    }
+
+    errorMsg.value = message
   } finally {
     loading.value = false
   }
@@ -93,7 +109,7 @@ const submit = async () => {
               small
               class="mr-2 pointer-events-none"
             />
-            {{ errorMsg }}
+            <span class="break-words">{{ errorMsg }}</span>
           </div>
         </template>
 
