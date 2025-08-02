@@ -7,39 +7,56 @@ import {
 } from '@mdi/js'
 import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import menuAside from '@/menuAside.js'
-import menuAsideAdmin from '@/menuAsideAdmin.js'
-import menuNavBar from '@/menuNavBar.js'
+import { useUserMode } from '@/stores/userMode.js'
+import menuAside       from '@/menuAside.js'
+import menuAsideAdmin  from '@/menuAsideAdmin.js'
+import menuNavBar      from '@/menuNavBar.js'
 import { useDarkModeStore } from '@/stores/darkMode.js'
-import BaseIcon from '@/components/BaseIcon.vue'
-import FormControl from '@/components/FormControl.vue'
-import NavBar from '@/components/NavBar.vue'
+import BaseIcon        from '@/components/BaseIcon.vue'
+import FormControl     from '@/components/FormControl.vue'
+import NavBar          from '@/components/NavBar.vue'
 import NavBarItemPlain from '@/components/NavBarItemPlain.vue'
-import AsideMenu from '@/components/AsideMenu.vue'
-import FooterBar from '@/components/FooterBar.vue'
+import AsideMenu       from '@/components/AsideMenu.vue'
+import FooterBar       from '@/components/FooterBar.vue'
 
 const layoutAsidePadding = 'xl:pl-60'
-
+const router        = useRouter()
+const userMode      = useUserMode()
 const darkModeStore = useDarkModeStore()
-const router = useRouter()
 
 const isAsideMobileExpanded = ref(false)
-const isAsideLgActive   = ref(false)
-const isAdminMode       = ref(false)          // ← admin/user toggle
+const isAsideLgActive       = ref(false)
 
+/* collapse on navigation */
 router.beforeEach(() => {
   isAsideMobileExpanded.value = false
-  isAsideLgActive.value = false
+  isAsideLgActive.value       = false
 })
 
+/* choose sidebar menu */
 const currentMenu = computed(() =>
-  isAdminMode.value ? menuAsideAdmin : menuAside,
+  userMode.isAdmin ? menuAsideAdmin : menuAside,
 )
 
+/* switch admin ↔ public */
+const switchMode = () => {
+  if (userMode.isAdmin) {
+    userMode.setPublic()
+    router.push('/public/dashboard')
+  } else {
+    userMode.setAdmin()
+    router.push('/admin/dashboard')
+  }
+}
+
+/* handle navbar dropdown items */
 const menuClick = (_, item) => {
   if (item.isToggleLightDark) darkModeStore.set()
-  if (item.isLogout) {
-    /* placeholder */
+  if (item.isLogout) { /* placeholder */ }
+
+  /* NEW: make “My Profile” mode-aware */
+  if (item?.label === 'My Profile') {
+    router.push(userMode.isAdmin ? '/admin/profile' : '/public/profile')
   }
 }
 </script>
@@ -85,16 +102,15 @@ const menuClick = (_, item) => {
           />
         </NavBarItemPlain>
 
-        <!-- ADMIN / USER TOGGLE  -->
+        <!-- ADMIN / PUBLIC TOGGLE -->
         <NavBarItemPlain
           class="cursor-pointer select-none"
-          @click.prevent="isAdminMode = !isAdminMode"
-          :title="isAdminMode ? 'Switch to user view' : 'Switch to admin view'"
+          @click.prevent="switchMode"
+          :title="userMode.isAdmin ? 'Switch to user view' : 'Switch to admin view'"
         >
           <BaseIcon :path="mdiAccountCog" size="24" />
-          <!-- small label shows on md+ screens -->
           <span class="ml-1 hidden md:inline text-sm">
-            {{ isAdminMode ? 'Admin' : 'User' }}
+            {{ userMode.isAdmin ? 'Admin' : 'User' }}
           </span>
         </NavBarItemPlain>
       </NavBar>

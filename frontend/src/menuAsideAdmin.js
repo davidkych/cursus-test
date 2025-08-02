@@ -1,6 +1,6 @@
 import {
   mdiAccountCircle,
-  mdiAccountPlus,     // ← NEW
+  mdiAccountPlus,
   mdiMonitor,
   mdiGithub,
   mdiLock,
@@ -14,46 +14,51 @@ import {
   mdiReact,
 } from '@mdi/js'
 
+/**
+ * Admin-mode sidebar menu
+ * — every in-app route is now prefixed with /admin/*
+ *   (global pages like /login, /register, /style remain unchanged)
+ */
 export default [
   {
-    to: '/dashboard',
+    to: '/admin/dashboard',
     icon: mdiMonitor,
     label: 'Dashboard (Admin)',
   },
   {
-    to: '/tables',
+    to: '/admin/tables',
     label: 'Tables',
     icon: mdiTable,
   },
   {
-    to: '/forms',
+    to: '/admin/forms',
     label: 'Forms',
     icon: mdiSquareEditOutline,
   },
   {
-    to: '/ui',
+    to: '/admin/ui',
     label: 'UI',
     icon: mdiTelevisionGuide,
   },
   {
-    to: '/responsive',
+    to: '/admin/responsive',
     label: 'Responsive',
     icon: mdiResponsive,
   },
   {
-    to: '/',
+    to: '/style',              // style selector (top-level guest route)
     label: 'Styles',
     icon: mdiPalette,
   },
   {
-    to: '/profile',
+    to: '/admin/profile',
     label: 'Profile',
     icon: mdiAccountCircle,
   },
   {
-    to: '/register',          // ← NEW
-    label: 'Register',        // ← NEW
-    icon: mdiAccountPlus,     // ← NEW
+    to: '/register',           // top-level guest routes (unchanged)
+    label: 'Register',
+    icon: mdiAccountPlus,
   },
   {
     to: '/login',
@@ -72,17 +77,5 @@ export default [
       { label: 'Item One' },
       { label: 'Item Two' },
     ],
-  },
-  {
-    href: 'https://github.com/justboil/admin-one-vue-tailwind',
-    label: 'GitHub',
-    icon: mdiGithub,
-    target: '_blank',
-  },
-  {
-    href: 'https://github.com/justboil/admin-one-react-tailwind',
-    label: 'React version',
-    icon: mdiReact,
-    target: '_blank',
   },
 ]

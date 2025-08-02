@@ -8,32 +8,32 @@ import {
 } from '@mdi/js'
 
 /**
- * Main (non-admin) sidebar menu
- * — keep ONLY the items requested
+ * Public-mode sidebar menu
+ * — every route is now prefixed with /public/*
  */
 export default [
   {
-    to: '/dashboard',
+    to: '/public/dashboard',
     icon: mdiMonitor,
     label: 'Dashboard',
   },
   {
-    to: '/tables',
+    to: '/public/tables',
     icon: mdiTable,
     label: 'Tables',
   },
   {
-    to: '/forms',
+    to: '/public/forms',
     icon: mdiSquareEditOutline,
     label: 'Forms',
   },
   {
-    to: '/ui',
+    to: '/public/ui',
     icon: mdiTelevisionGuide,
     label: 'UI',
   },
   {
-    to: '/profile',
+    to: '/public/profile',
     icon: mdiAccountCircle,
     label: 'Profile',
   },

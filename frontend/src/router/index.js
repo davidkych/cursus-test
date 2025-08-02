@@ -1,93 +1,137 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
-import Style from '@/views/StyleView.vue'
-import Home from '@/views/HomeView.vue'
+import { resolveView } from '@/router/resolveView.js'
 
-const routes = [
+// ── Top‑level (guest) views — imported directly --------------------------------
+import StyleView     from '@/viewsTop/StyleView.vue'
+
+const LoginView     = () => import('@/viewsTop/LoginView.vue')
+const RegisterView  = () => import('@/viewsTop/RegisterView.vue')
+const ErrorView     = () => import('@/viewsTop/ErrorView.vue')
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Route groups
+// ────────────────────────────────────────────────────────────────────────────────
+
+// 1. Guest / top routes (no prefix)
+const topRoutes = [
+  // Landing: always redirect to the public dashboard
   {
-    meta: {
-      title: 'Select style',
-    },
     path: '/',
+    redirect: '/public/dashboard',
+  },
+  {
+    meta: { title: 'Select style' },
+    path: '/style',
     name: 'style',
-    component: Style,
+    component: StyleView,
   },
   {
-    // Document title tag
-    // We combine it with defaultDocumentTitle set in `src/main.js` on router.afterEach hook
-    meta: {
-      title: 'Dashboard',
-    },
-    path: '/dashboard',
-    name: 'dashboard',
-    component: Home,
-  },
-  {
-    meta: {
-      title: 'Tables',
-    },
-    path: '/tables',
-    name: 'tables',
-    component: () => import('@/views/TablesView.vue'),
-  },
-  {
-    meta: {
-      title: 'Forms',
-    },
-    path: '/forms',
-    name: 'forms',
-    component: () => import('@/views/FormsView.vue'),
-  },
-  {
-    meta: {
-      title: 'Profile',
-    },
-    path: '/profile',
-    name: 'profile',
-    component: () => import('@/views/ProfileView.vue'),
-  },
-  {
-    meta: {
-      title: 'Ui',
-    },
-    path: '/ui',
-    name: 'ui',
-    component: () => import('@/views/UiView.vue'),
-  },
-  {
-    meta: {
-      title: 'Responsive layout',
-    },
-    path: '/responsive',
-    name: 'responsive',
-    component: () => import('@/views/ResponsiveView.vue'),
-  },
-  {
-    meta: {
-      title: 'Login',
-    },
+    meta: { title: 'Login' },
     path: '/login',
     name: 'login',
-    component: () => import('@/views/LoginView.vue'),
+    component: LoginView,
   },
   {
-    meta: { title: 'Register' },          // ← NEW
-    path: '/register',                    // ← NEW
-    name: 'register',                     // ← NEW
-    component: () => import('@/views/RegisterView.vue'), // ← NEW
+    meta: { title: 'Register' },
+    path: '/register',
+    name: 'register',
+    component: RegisterView,
   },
   {
-    meta: {
-      title: 'Error',
-    },
+    meta: { title: 'Error' },
     path: '/error',
     name: 'error',
-    component: () => import('@/views/ErrorView.vue'),
+    component: ErrorView,
   },
 ]
 
+// 2. Public UI routes  (/public/*)
+const publicRoutes = [
+  {
+    meta: { title: 'Dashboard' },
+    path: '/public/dashboard',
+    name: 'pub-dashboard',
+    component: resolveView('HomeView.vue', 'public'),
+  },
+  {
+    meta: { title: 'Tables' },
+    path: '/public/tables',
+    name: 'pub-tables',
+    component: resolveView('TablesView.vue', 'public'),
+  },
+  {
+    meta: { title: 'Forms' },
+    path: '/public/forms',
+    name: 'pub-forms',
+    component: resolveView('FormsView.vue', 'public'),
+  },
+  {
+    meta: { title: 'Profile' },
+    path: '/public/profile',
+    name: 'pub-profile',
+    component: resolveView('ProfileView.vue', 'public'),
+  },
+  {
+    meta: { title: 'Ui' },
+    path: '/public/ui',
+    name: 'pub-ui',
+    component: resolveView('UiView.vue', 'public'),
+  },
+  {
+    meta: { title: 'Responsive layout' },
+    path: '/public/responsive',
+    name: 'pub-responsive',
+    component: resolveView('ResponsiveView.vue', 'public'),
+  },
+]
+
+// 3. Admin UI routes  (/admin/*)
+const adminRoutes = [
+  {
+    meta: { title: 'Dashboard (Admin)' },
+    path: '/admin/dashboard',
+    name: 'adm-dashboard',
+    component: resolveView('HomeView.vue', 'admin'),
+  },
+  {
+    meta: { title: 'Tables' },
+    path: '/admin/tables',
+    name: 'adm-tables',
+    component: resolveView('TablesView.vue', 'admin'),
+  },
+  {
+    meta: { title: 'Forms' },
+    path: '/admin/forms',
+    name: 'adm-forms',
+    component: resolveView('FormsView.vue', 'admin'),
+  },
+  {
+    meta: { title: 'Profile' },
+    path: '/admin/profile',
+    name: 'adm-profile',
+    component: resolveView('ProfileView.vue', 'admin'),
+  },
+  {
+    meta: { title: 'Ui' },
+    path: '/admin/ui',
+    name: 'adm-ui',
+    component: resolveView('UiView.vue', 'admin'),
+  },
+  {
+    meta: { title: 'Responsive layout' },
+    path: '/admin/responsive',
+    name: 'adm-responsive',
+    component: resolveView('ResponsiveView.vue', 'admin'),
+  },
+]
+
+// ────────────────────────────────────────────────────────────────────────────────
+// Router instance
+// ────────────────────────────────────────────────────────────────────────────────
+
 const router = createRouter({
   history: createWebHashHistory(),
-  routes,
+  routes: [...topRoutes, ...publicRoutes, ...adminRoutes],
   scrollBehavior(to, from, savedPosition) {
     return savedPosition || { top: 0 }
   },
