@@ -1,12 +1,13 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import { resolveView } from '@/router/resolveView.js'
 
-// ── Top‑level (guest) views — imported directly --------------------------------
-import StyleView     from '@/viewsTop/StyleView.vue'
+// ── Top-level (guest) views — imported directly --------------------------------
+import StyleView from '@/viewsTop/StyleView.vue'
 
-const LoginView     = () => import('@/viewsTop/LoginView.vue')
-const RegisterView  = () => import('@/viewsTop/RegisterView.vue')
-const ErrorView     = () => import('@/viewsTop/ErrorView.vue')
+const LoginView        = () => import('@/viewsTop/LoginView.vue')
+const RegisterView     = () => import('@/viewsTop/RegisterView.vue')
+const ErrorView        = () => import('@/viewsTop/ErrorView.vue')
+const PropicGalleryView = () => import('@/viewsTop/PropicGalleryView.vue')   // ← NEW
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Route groups
@@ -42,6 +43,12 @@ const topRoutes = [
     path: '/error',
     name: 'error',
     component: ErrorView,
+  },
+  {
+    meta: { title: 'Profile pictures' },          // ← NEW
+    path: '/propic-gallery',
+    name: 'propic-gallery',
+    component: PropicGalleryView,
   },
 ]
 

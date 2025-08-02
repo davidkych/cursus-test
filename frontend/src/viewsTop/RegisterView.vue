@@ -8,20 +8,22 @@ import {
   mdiCheck,
   mdiAlertCircle,
   mdiCalendar,
+  mdiImage,
 } from '@mdi/js'
-import SectionFullScreen from '@/components/SectionFullScreen.vue'
-import CardBox from '@/components/CardBox.vue'
-import FormCheckRadio from '@/components/FormCheckRadio.vue'
-import FormCheckRadioGroup from '@/components/FormCheckRadioGroup.vue'
-import FormField from '@/components/FormField.vue'
-import FormControl from '@/components/FormControl.vue'
-import BaseButton from '@/components/BaseButton.vue'
-import BaseButtons from '@/components/BaseButtons.vue'
-import LayoutGuest from '@/layouts/LayoutGuest.vue'
-import countries from '@/assets/countries.json'
-import { register as apiRegister } from '@/services/auth.js'
 
-const countryOptions = ref(countries)
+import SectionFullScreen      from '@/components/SectionFullScreen.vue'
+import CardBox                from '@/components/CardBox.vue'
+import FormCheckRadio         from '@/components/FormCheckRadio.vue'
+import FormCheckRadioGroup    from '@/components/FormCheckRadioGroup.vue'
+import FormField              from '@/components/FormField.vue'
+import FormControl            from '@/components/FormControl.vue'
+import BaseButton             from '@/components/BaseButton.vue'
+import BaseButtons            from '@/components/BaseButtons.vue'
+import LayoutGuest            from '@/layouts/LayoutGuest.vue'
+import ProfilePicSelector     from '@/components/ProfilePicSelector.vue'
+
+import countries              from '@/assets/countries.json'
+import { register as apiRegister } from '@/services/auth.js'
 
 /* ────────────────────────── form model ─────────────────────────────── */
 const form = reactive({
@@ -33,6 +35,8 @@ const form = reactive({
   passwordConfirm: '',
   email: '',
   emailConfirm: '',
+  profilePicId: 1,
+  profilePicType: 'default',
   acceptedTerms: false,
 })
 
@@ -43,55 +47,44 @@ const loading  = ref(false)
 
 const submit = async () => {
   errorMsg.value = ''
-
-  // ── client-side validations ─────────────────────────────────────────
-  if (form.password !== form.passwordConfirm) {
-    errorMsg.value = 'Passwords do not match'; return
-  }
-  if (form.email !== form.emailConfirm) {
-    errorMsg.value = 'E-mails do not match'; return
-  }
+  if (form.password !== form.passwordConfirm) { errorMsg.value = 'Passwords do not match'; return }
+  if (form.email !== form.emailConfirm)       { errorMsg.value = 'E-mails do not match'; return }
   if (!form.gender)        { errorMsg.value = 'Please select your gender'; return }
   if (!form.dob)           { errorMsg.value = 'Please enter your date of birth'; return }
   if (new Date(form.dob) > new Date()) {
     errorMsg.value = 'Date of birth must be in the past'; return
   }
   if (!form.country)       { errorMsg.value = 'Please select your country'; return }
+  if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture'; return }
   if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
-  // ── call API ────────────────────────────────────────────────────────
   loading.value = true
   try {
     await apiRegister({
-      username: form.username,
-      email:    form.email,
-      password: form.password,
+      username:           form.username,
+      email:              form.email,
+      password:           form.password,
+      profile_pic_id:     form.profilePicId,
+      profile_pic_type:   form.profilePicType,
     })
     router.push('/login')
   } catch (err) {
-    /* ── extract a human-readable error message ─────────────────────── */
     let message = 'Registration failed'
-
     const detail = err?.response?.data?.detail
     if (detail) {
-      if (typeof detail === 'string') {
-        message = detail
-      } else if (Array.isArray(detail)) {
-        // FastAPI validation error list
-        message = detail
-          .map(e => e.msg ?? JSON.stringify(e))
-          .join(' • ')
-      } else if (typeof detail === 'object') {
-        message = JSON.stringify(detail)
-      }
-    } else if (err.message) {
-      message = err.message
-    }
-
+      if (typeof detail === 'string') message = detail
+      else if (Array.isArray(detail)) message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
+      else if (typeof detail === 'object') message = JSON.stringify(detail)
+    } else if (err.message) message = err.message
     errorMsg.value = message
   } finally {
     loading.value = false
   }
+}
+
+/* ─────────────────────── gallery opener ───────────────────────────── */
+function openGallery() {
+  window.open('#/propic-gallery', 'propicGallery')
 }
 </script>
 
@@ -150,10 +143,25 @@ const submit = async () => {
         <FormField label="Country">
           <FormControl
             v-model="form.country"
-            :options="countryOptions"
+            :options="countries"
             placeholder="Select a country"
             required
           />
+        </FormField>
+
+        <!-- PROFILE PICTURE -->
+        <FormField label="Profile picture">
+          <div class="flex items-center gap-2">
+            <ProfilePicSelector v-model="form.profilePicId" class="w-24" />
+            <BaseButton
+              :icon="mdiImage"
+              color="info"
+              outline
+              small
+              label="View gallery"
+              @click="openGallery"
+            />
+          </div>
         </FormField>
 
         <!-- PASSWORD -->
