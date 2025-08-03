@@ -1,23 +1,28 @@
-# ── src/routers/auth/register.py ─────────────────────────────────────────────
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from passlib.hash import sha256_crypt
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-import os
-import datetime
-import typing as _t
+from functools import lru_cache
+import os, datetime, typing as _t
 
-# ───────────────────────── Cosmos setup ──────────────────────────
-_cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
-_database_name   = os.getenv("COSMOS_DATABASE")
-_users_container = os.getenv("USERS_CONTAINER", "users")
+# ───────────────────────── Cosmos helpers ──────────────────────────
+_cosmos_endpoint   = os.getenv("COSMOS_ENDPOINT")
+_database_name     = os.getenv("COSMOS_DATABASE")
+_users_container   = os.getenv("USERS_CONTAINER", "users")
 
-_client = CosmosClient(
-    _cosmos_endpoint,
-    credential=DefaultAzureCredential()
-)
-_users = _client.get_database_client(_database_name).get_container_client(_users_container)
+@lru_cache(maxsize=1)
+def _get_users_container():
+    """
+    Lazily create the Cosmos client **after** FastAPI has started so that
+    Managed Identity / AAD handshake doesn't block the container’s boot-up.
+    """
+    client = CosmosClient(
+        _cosmos_endpoint,
+        credential=DefaultAzureCredential(),
+    )
+    return client.get_database_client(_database_name) \
+                 .get_container_client(_users_container)
 
 # ────────────────────────── Pydantic models ─────────────────────
 class UserCreate(BaseModel):
@@ -41,8 +46,6 @@ class UserRead(BaseModel):
     username: str
     email:    EmailStr
     created:  datetime.datetime
-
-    # Echo the avatar choice back to the client (not used yet)
     profile_pic_id:   _t.Optional[int] = None
     profile_pic_type: _t.Optional[str] = None
 
@@ -51,19 +54,13 @@ def _hash_pwd(pwd: str) -> str:
     return sha256_crypt.hash(pwd)
 
 # ──────────────────────────── Router ────────────────────────────
-router = APIRouter(
-    prefix="/api/auth",
-    tags=["auth"],
-)
+router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 def register(user: UserCreate):
     """
-    Create a new user document.
-
-    • Primary key (id) == username for inexpensive point-reads.  
-    • Stores optional profile-picture fields without validating existence;
-      the frontend is responsible for sending a valid numeric ID.
+    Create a new user document with optional avatar metadata.
+    Primary key == username for inexpensive point-reads.
     """
     doc = {
         "id":       user.username,
@@ -73,18 +70,20 @@ def register(user: UserCreate):
         "created":  datetime.datetime.utcnow().isoformat(),
     }
 
-    # ── Include avatar choice if provided ───────────────────────
     if user.profile_pic_id is not None:
         doc["profile_pic_id"]   = user.profile_pic_id
         doc["profile_pic_type"] = user.profile_pic_type or "default"
 
+    container = _get_users_container()
     try:
-        _users.create_item(doc)
+        container.create_item(doc)
     except exceptions.CosmosResourceExistsError:
-        raise HTTPException(status_code=409, detail="Username or e-mail already exists")
+        raise HTTPException(
+            status_code=409,
+            detail="Username or e-mail already exists",
+        )
 
-    # Return user-facing fields only
-    return {
-        k: doc.get(k)
-        for k in ("id", "username", "email", "created", "profile_pic_id", "profile_pic_type")
-    }
+    return {k: doc.get(k) for k in (
+        "id", "username", "email", "created",
+        "profile_pic_id", "profile_pic_type"
+    )}
