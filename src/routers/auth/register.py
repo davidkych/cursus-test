@@ -1,108 +1,56 @@
-# src/routers/auth/register.py
-# ──────────────────────────────────────────────────────────────────────────────
-# POST /api/auth/register
-# Creates a new user document in the Cosmos DB *users* container.
-# ──────────────────────────────────────────────────────────────────────────────
-import os
-from datetime import datetime, timezone
-from typing import Optional
-from uuid import uuid4
-
+# ── src/routers/auth/register.py ─────────────────────────────────────────────
+from fastapi import APIRouter, HTTPException, status
+from pydantic import BaseModel, EmailStr, Field
+from passlib.hash import sha256_crypt
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field, constr
-from passlib.context import CryptContext
+import os, datetime
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+# ───────────────────────── Cosmos setup ──────────────────────────
+_cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
+_database_name   = os.getenv("COSMOS_DATABASE")
+_users_container = os.getenv("USERS_CONTAINER", "users")
 
-# ── Pydantic models ──────────────────────────────────────────────────────────
-class RegisterRequest(BaseModel):
-    username: constr(strip_whitespace=True,
-                     min_length=3, max_length=40,
-                     regex=r"^[A-Za-z0-9_\-\.]+$")
-    email: EmailStr
-    password: constr(min_length=8, max_length=100)
-    profile_pic_id: int = Field(..., ge=1)
-    profile_pic_type: str = Field("default",
-                                  regex=r"^(default|custom)$")
+_client = CosmosClient(
+    _cosmos_endpoint,
+    credential=DefaultAzureCredential()
+)
+_users = _client.get_database_client(_database_name).get_container_client(_users_container)
 
-class UserPublic(BaseModel):
-    id: str
+# ────────────────────────── Pydantic model ─────────────────────
+class UserCreate(BaseModel):
+    username: str     = Field(..., min_length=3, max_length=32)
+    email:    EmailStr
+    password: str     = Field(..., min_length=8)
+
+class UserRead(BaseModel):
+    id:       str
     username: str
-    email: EmailStr
-    profile_pic_id: Optional[int] = None
-    profile_pic_type: Optional[str] = None
-    created_at: datetime
+    email:    EmailStr
+    created:  datetime.datetime
 
-# ── Crypto setup ─────────────────────────────────────────────────────────────
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# ───────────────────────── helper function ─────────────────────
+def _hash_pwd(pwd: str) -> str:
+    return sha256_crypt.hash(pwd)
 
-# ── Cosmos helpers (singleton) ───────────────────────────────────────────────
-def _get_container():
-    """Return a cached Cosmos container client for the *users* container."""
-    if hasattr(_get_container, "_container"):
-        return _get_container._container
+# ──────────────────────────── Router ────────────────────────────
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["auth"]
+)
 
-    endpoint      = os.environ["COSMOS_ENDPOINT"]
-    database_name = os.environ["COSMOS_DATABASE"]
-    container_name = os.getenv("USERS_CONTAINER", "users")
-
-    credential = DefaultAzureCredential()
-    client     = CosmosClient(endpoint, credential=credential,
-                              consistency_level="Session")
-
-    database  = client.get_database_client(database_name)
-    container = database.get_container_client(container_name)
-
-    _get_container._container = container
-    return container
-
-# ── Route --------------------------------------------------------------------
-@router.post("/register",
-             response_model=UserPublic,
-             status_code=status.HTTP_201_CREATED)
-def register_user(payload: RegisterRequest):
-    """
-    Create a new user if **username** and **email** are unique.
-    Passwords are stored as bcrypt hashes.
-    """
-    container = _get_container()
-
-    # ‣ Check uniqueness
-    dup_q = """
-        SELECT VALUE COUNT(1) FROM c
-        WHERE c.username = @u OR c.email = @e
-    """
-    params = [{"name": "@u", "value": payload.username},
-              {"name": "@e", "value": payload.email}]
-    dup = list(container.query_items(dup_q,
-                                     parameters=params,
-                                     enable_cross_partition_query=True))[0]
-    if dup:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                            detail="Username or e-mail already exists")
-
-    # ‣ Build document
-    now = datetime.now(timezone.utc)
+@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+def register(user: UserCreate):
     doc = {
-        "id":              str(uuid4()),
-        "username":        payload.username,
-        "email":           payload.email,
-        "password_hash":   pwd_ctx.hash(payload.password),
-        "profile_pic_id":  payload.profile_pic_id,
-        "profile_pic_type": payload.profile_pic_type,
-        "created_at":      now.isoformat().replace("+00:00", "Z"),
+        "id":       user.username,                 # id == PK for cheap point-reads
+        "username": user.username,
+        "email":    user.email,
+        "password": _hash_pwd(user.password),
+        "created":  datetime.datetime.utcnow().isoformat(),
     }
-
-    # ‣ Persist
     try:
-        container.create_item(body=doc)
-    except exceptions.CosmosHttpResponseError as exc:
-        # Defensive: unique-key race, etc.
-        if exc.status_code == 409:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT,
-                                detail="Username or e-mail already exists")
-        raise
+        _users.create_item(doc)
+    except exceptions.CosmosResourceExistsError:
+        raise HTTPException(status_code=409, detail="Username or e-mail already exists")
 
-    return UserPublic(**{k: doc[k] for k in UserPublic.__fields__})
+    return {k: doc[k] for k in ("id", "username", "email", "created")}

@@ -1,88 +1,54 @@
-# src/routers/auth/login.py
-# ──────────────────────────────────────────────────────────────────────────────
-# POST /api/auth/login
-# Validates username + password and returns a 24 h JWT access token.
-# ──────────────────────────────────────────────────────────────────────────────
-import os
-from datetime import datetime, timedelta, timezone
-from typing import Literal
-
-import jwt
-from azure.cosmos import CosmosClient
+# ── src/routers/auth/login.py ────────────────────────────────────────────────
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from passlib.hash import sha256_crypt
+from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-from fastapi import APIRouter, HTTPException, status
-from passlib.context import CryptContext
-from pydantic import BaseModel, constr
+import os, datetime, jwt
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
+# ───────────────────────── Cosmos setup ──────────────────────────
+_cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
+_database_name   = os.getenv("COSMOS_DATABASE")
+_users_container = os.getenv("USERS_CONTAINER", "users")
+_jwt_secret      = os.getenv("JWT_SECRET", "change-me")
 
-# ── Request / Response models ────────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    username: constr(strip_whitespace=True, min_length=3, max_length=40)
+_client = CosmosClient(
+    _cosmos_endpoint,
+    credential=DefaultAzureCredential()
+)
+_users = _client.get_database_client(_database_name).get_container_client(_users_container)
+
+# ────────────────────────── Pydantic model ─────────────────────
+class LoginIn(BaseModel):
+    username: str
     password: str
 
-class LoginResponse(BaseModel):
+class TokenOut(BaseModel):
     access_token: str
-    token_type:   Literal["bearer"]
+    token_type:   str = "bearer"
 
-# ── Runtime constants ────────────────────────────────────────────────────────
-JWT_SECRET     = os.environ["JWT_SECRET"]
-JWT_ALG        = "HS256"
-JWT_EXPIRES_IN = timedelta(hours=24)
+# ───────────────────────── helper functions ────────────────────
+def _verify_pwd(pwd: str, hashed: str) -> bool:
+    return sha256_crypt.verify(pwd, hashed)
 
-pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def _make_jwt(sub: str) -> str:
+    exp = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    return jwt.encode({"sub": sub, "exp": exp}, _jwt_secret, algorithm="HS256")
 
-# ── Cosmos helpers (singleton) ───────────────────────────────────────────────
-def _get_container():
-    if hasattr(_get_container, "_container"):
-        return _get_container._container
+# ──────────────────────────── Router ────────────────────────────
+router = APIRouter(
+    prefix="/api/auth",
+    tags=["auth"]
+)
 
-    endpoint       = os.environ["COSMOS_ENDPOINT"]
-    database_name  = os.environ["COSMOS_DATABASE"]
-    container_name = os.getenv("USERS_CONTAINER", "users")
+@router.post("/login", response_model=TokenOut)
+def login(creds: LoginIn):
+    try:
+        db_user = _users.read_item(item=creds.username, partition_key=creds.username)
+    except exceptions.CosmosResourceNotFoundError:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    cred      = DefaultAzureCredential()
-    client    = CosmosClient(endpoint, credential=cred,
-                             consistency_level="Session")
-    database  = client.get_database_client(database_name)
-    container = database.get_container_client(container_name)
+    if not _verify_pwd(creds.password, db_user["password"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    _get_container._container = container
-    return container
-
-# ── Route --------------------------------------------------------------------
-@router.post("/login",
-             response_model=LoginResponse,
-             status_code=status.HTTP_200_OK)
-def login(payload: LoginRequest):
-    """
-    Authenticate a user and issue a JWT.
-    """
-    container = _get_container()
-
-    # Fetch user (partition key = username)
-    query = "SELECT * FROM c WHERE c.username = @u OFFSET 0 LIMIT 1"
-    params = [{"name": "@u", "value": payload.username}]
-    items = list(container.query_items(query, parameters=params,
-                                       enable_cross_partition_query=True))
-    if not items:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Invalid credentials")
-
-    user = items[0]
-
-    # Verify password
-    if not pwd_ctx.verify(payload.password, user.get("password_hash", "")):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Invalid credentials")
-
-    # Issue JWT
-    now = datetime.now(timezone.utc)
-    claims = {
-        "sub": user["username"],
-        "exp": now + JWT_EXPIRES_IN,
-        "iat": now,
-    }
-    token = jwt.encode(claims, JWT_SECRET, algorithm=JWT_ALG)
-
-    return LoginResponse(access_token=token, token_type="bearer")
+    return {"access_token": _make_jwt(db_user["id"])}
