@@ -1,46 +1,46 @@
 <script setup>
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { mdiAccount, mdiAsterisk, mdiAlertCircle } from '@mdi/js'
-import SectionFullScreen from '@/components/SectionFullScreen.vue'
-import CardBox from '@/components/CardBox.vue'
-import FormCheckRadio from '@/components/FormCheckRadio.vue'
-import FormField from '@/components/FormField.vue'
-import FormControl from '@/components/FormControl.vue'
-import BaseButton from '@/components/BaseButton.vue'
-import BaseButtons from '@/components/BaseButtons.vue'
-import LayoutGuest from '@/layouts/LayoutGuest.vue'
-import { login as apiLogin } from '@/services/auth.js'      // ← NEW
+import {
+  mdiAccount,
+  mdiAsterisk,
+  mdiAlertCircle,
+} from '@mdi/js'
 
+import SectionFullScreen from '@/components/SectionFullScreen.vue'
+import CardBox           from '@/components/CardBox.vue'
+import FormField         from '@/components/FormField.vue'
+import FormControl       from '@/components/FormControl.vue'
+import BaseButton        from '@/components/BaseButton.vue'
+import BaseButtons       from '@/components/BaseButtons.vue'
+import LayoutGuest       from '@/layouts/LayoutGuest.vue'
+
+import { login as apiLogin } from '@/services/auth.js'
+
+/* ────────────────────────── form model ─────────────────────────────── */
 const form = reactive({
-  login: 'john.doe',
-  pass: 'highly-secure-password-fYjUw-',
-  remember: true,
+  username: '',
+  password: '',
 })
 
+/* ───────────────────────────── logic ───────────────────────────────── */
 const router   = useRouter()
 const errorMsg = ref('')
 const loading  = ref(false)
 
 const submit = async () => {
   errorMsg.value = ''
-  loading.value = true
+  loading.value  = true
   try {
-    const res = await apiLogin({
-      username: form.login,
-      password: form.pass,
-    })
-
-    // Persist token (simple approach)
-    if (form.remember) {
-      localStorage.setItem('jwt', res.access_token)
-    } else {
-      sessionStorage.setItem('jwt', res.access_token)
-    }
-
-    router.push('/dashboard')
-  } catch (e) {
-    errorMsg.value = e.message
+    await apiLogin(form)
+    // ── redirect fixed: go to public dashboard ───────────────
+    router.push('/public/dashboard')
+  } catch (err) {
+    let message = 'Login failed'
+    const detail = err?.response?.data?.detail
+    if (detail) message = typeof detail === 'string' ? detail : JSON.stringify(detail)
+    else if (err.message) message = err.message
+    errorMsg.value = message
   } finally {
     loading.value = false
   }
@@ -61,36 +61,34 @@ const submit = async () => {
               small
               class="mr-2 pointer-events-none"
             />
-            {{ errorMsg }}
+            <span class="break-words">{{ errorMsg }}</span>
           </div>
         </template>
 
-        <FormField label="Login" help="Please enter your login">
+        <!-- USERNAME -->
+        <FormField label="Username">
           <FormControl
-            v-model="form.login"
+            v-model="form.username"
             :icon="mdiAccount"
-            name="login"
+            name="username"
             autocomplete="username"
+            required
           />
         </FormField>
 
-        <FormField label="Password" help="Please enter your password">
+        <!-- PASSWORD -->
+        <FormField label="Password">
           <FormControl
-            v-model="form.pass"
+            v-model="form.password"
             :icon="mdiAsterisk"
             type="password"
             name="password"
             autocomplete="current-password"
+            required
           />
         </FormField>
 
-        <FormCheckRadio
-          v-model="form.remember"
-          name="remember"
-          label="Remember"
-          :input-value="true"
-        />
-
+        <!-- buttons -->
         <template #footer>
           <BaseButtons>
             <BaseButton
@@ -99,7 +97,7 @@ const submit = async () => {
               :label="loading ? 'Logging in…' : 'Login'"
               :disabled="loading"
             />
-            <BaseButton to="/dashboard" color="info" outline label="Back" />
+            <BaseButton to="/register" color="info" outline label="Go to register" />
           </BaseButtons>
         </template>
       </CardBox>
