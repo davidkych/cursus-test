@@ -11,4 +11,4 @@ openpyxl>=3.1.5
 pdfplumber==0.10.4
 passlib==1.7.4          # password hashing (pure-python)
 PyJWT==2.8.0            # JWT encoding/decoding
-python-user-agents==2.2.0   #  ← NEW
+user-agents==2.2.0      # UA parser for login analytics  ← NEW
