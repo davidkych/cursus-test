@@ -1,96 +1,61 @@
-// frontend/src/stores/auth.js
-// Auth/session store (Pinia).
-// ▸ Keeps the JWT in localStorage
-// ▸ Exposes isAuthenticated, username, avatarUrl, etc.
-// ▸ Auto-hydrates profile data via GET /api/auth/me
+// frontend/src/services/auth.js
+// ──────────────────────────────────────────────────────────────────────────────
+// Lightweight helpers for the /api/auth/* endpoints
+//   • register(payload)
+//   • login(payload)
+//   • getMe(accessToken)
+//   • decodeJwt(token)
+// ──────────────────────────────────────────────────────────────────────────────
 
-import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { getMe as apiGetMe } from '@/services/auth.js'
+const API_BASE = import.meta.env.VITE_API_BASE || ''
 
-const STORAGE_KEY = 'access_token'
+/* ─── shared error-handler ─────────────────────────────────────────────── */
+async function handleError (res, fallbackMsg) {
+  const body = await res.json().catch(() => ({}))
+  throw new Error(body.detail || fallbackMsg)
+}
 
-export const useAuthStore = defineStore('auth', () => {
-  /* ─── state ───────────────────────────────────────────── */
-  const accessToken     = ref('')               // raw JWT
-  const username        = ref('')
-  const profilePicId    = ref(null)
-  const profilePicType  = ref('default')        // 'default' | 'custom' (future)
+/* ─── tiny JWT decoder (fixed) ─────────────────────────────────────────── */
+export function decodeJwt (token) {
+  try {
+    const base64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const json   = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join(''),
+    )
+    return JSON.parse(json)
+  } catch {
+    return null
+  }
+}
 
-  /* ─── getters ─────────────────────────────────────────── */
-  const isAuthenticated = computed(() => !!accessToken.value)
-
-  const avatarUrl = computed(() => {
-    if (!profilePicId.value) return ''
-    // built-in avatars only (1.png … 23.png)
-    return new URL(
-      `../assets/propics/${profilePicId.value}.png`,
-      import.meta.url,
-    ).href
+/* ─── API calls ────────────────────────────────────────────────────────── */
+export async function register (payload) {
+  const res = await fetch(`${API_BASE}/api/auth/register`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(payload),
   })
+  if (!res.ok) await handleError(res, 'Registration failed')
+  return res.json()
+}
 
-  /* ─── helpers ─────────────────────────────────────────── */
-  function _persistToken () {
-    if (typeof window !== 'undefined') {
-      if (accessToken.value) localStorage.setItem(STORAGE_KEY, accessToken.value)
-      else localStorage.removeItem(STORAGE_KEY)
-    }
-  }
+export async function login (payload) {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'Login failed')
+  return res.json()
+}
 
-  /* ─── actions ─────────────────────────────────────────── */
-  async function setToken (token) {
-    accessToken.value = token
-    _persistToken()
-    await refreshProfile()              // hydrate user fields
-  }
-
-  async function refreshProfile () {
-    if (!accessToken.value) return
-    try {
-      const data = await apiGetMe(accessToken.value)   // Authorization handled inside service
-      username.value        = data.username
-      profilePicId.value    = data.profile_pic_id  ?? null
-      profilePicType.value  = data.profile_pic_type ?? 'default'
-    } catch (err) {
-      // Invalid/expired token ⇒ force logout
-      console.error('[auth] refreshProfile failed:', err)
-      logout()
-    }
-  }
-
-  function logout () {
-    accessToken.value   = ''
-    username.value      = ''
-    profilePicId.value  = null
-    profilePicType.value = 'default'
-    _persistToken()
-  }
-
-  /* ─── bootstrap from localStorage ─────────────────────── */
-  ;(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) {
-        accessToken.value = saved
-        // Fire-and-forget; errors handled inside
-        refreshProfile()
-      }
-    }
-  })()
-
-  /* expose */
-  return {
-    // state
-    accessToken,
-    username,
-    profilePicId,
-    profilePicType,
-    // getters
-    isAuthenticated,
-    avatarUrl,
-    // actions
-    setToken,
-    refreshProfile,
-    logout,
-  }
-})
+export async function getMe (accessToken) {
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  })
+  if (!res.ok) await handleError(res, 'Failed to fetch user profile')
+  return res.json()
+}

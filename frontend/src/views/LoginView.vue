@@ -2,11 +2,11 @@
 /* ──────────────────────────────────────────────────────────────
    Login page (guest layout)
 
-   • Saves JWT via the Pinia auth store.
-   • “Remember” checkbox controls persistence:
-       ✓ ON  → token saved in localStorage  (default)
-       ☐ OFF → token kept only in-memory – cleared on reload
-   • Redirects to /public/dashboard after success.
+   • Authenticates with the backend and stores the JWT via Pinia’s
+     auth store (`auth.setToken()`).
+   • “Remember me” → keep token across reloads (localStorage).
+     Unchecked  → token is kept only in-memory for this tab.
+   • Redirects to /public/dashboard on success.
    ──────────────────────────────────────────────────────────── */
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -22,7 +22,7 @@ import BaseButtons       from '@/components/BaseButtons.vue'
 import LayoutGuest       from '@/layouts/LayoutGuest.vue'
 
 import { login as apiLogin }  from '@/services/auth.js'
-import { useAuthStore }       from '@/stores/auth.js'        // ← NEW
+import { useAuthStore }       from '@/stores/auth.js'
 
 /* ─────────────── form state ─────────────────────────────── */
 const form = reactive({
@@ -33,7 +33,7 @@ const form = reactive({
 
 /* ─────────────── logic ──────────────────────────────────── */
 const router   = useRouter()
-const auth     = useAuthStore()        // Pinia store
+const auth     = useAuthStore()
 const errorMsg = ref('')
 const loading  = ref(false)
 
@@ -47,13 +47,14 @@ const submit = async () => {
       password: form.pass,
     })
 
-    /* 2. Persist (or not) according to “Remember” */
-    await auth.setToken(access_token)      // hydrates profile + saves to localStorage
+    /* 2. Store token through Pinia */
+    await auth.setToken(access_token)      // hydrates profile + saves under 'access_token'
     if (!form.remember && typeof localStorage !== 'undefined') {
-      localStorage.removeItem('access_token')   // keep token only in-memory
+      // Session-only login → remove persisted copy
+      localStorage.removeItem('access_token')
     }
 
-    /* 3. Go to the main dashboard */
+    /* 3. Redirect */
     router.push('/public/dashboard')
   } catch (err) {
     errorMsg.value = err?.message || 'Login failed'
@@ -82,7 +83,7 @@ const submit = async () => {
         </template>
 
         <!-- LOGIN -->
-        <FormField label="Login" help="Please enter your username">
+        <FormField label="Username" help="Please enter your username">
           <FormControl
             v-model="form.login"
             :icon="mdiAccount"
