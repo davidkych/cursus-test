@@ -4,6 +4,10 @@
 // Prefer an environment variable; fall back to same-origin
 const API_BASE = import.meta.env.VITE_API_BASE || ''
 
+/**
+ * Convert non-2xx fetch responses into thrown Error objects,
+ * extracting FastAPI-style `detail` messages when present.
+ */
 function handleError(res, fallbackMsg) {
   return res
     .json()
@@ -13,6 +17,19 @@ function handleError(res, fallbackMsg) {
     })
 }
 
+/**
+ * Register a new user.
+ *
+ * Expected payload shape (all keys optional except the originals):
+ * {
+ *   username:           string,
+ *   email:              string,
+ *   password:           string,
+ *   // ── NEW optional fields ───────────────────────────────
+ *   profile_pic_id:     number,          // numeric ID (1, 2, 3…)
+ *   profile_pic_type:   'default'|'custom'
+ * }
+ */
 export async function register(payload) {
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: 'POST',
