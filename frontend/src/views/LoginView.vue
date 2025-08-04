@@ -1,63 +1,46 @@
 <script setup>
-/* ──────────────────────────────────────────────────────────────
-   Login page (guest layout)
-
-   • Authenticates with the backend and stores the JWT via Pinia’s
-     auth store (`auth.setToken()`).
-   • “Remember me” → keep token across reloads (localStorage).
-     Unchecked  → token is kept only in-memory for this tab.
-   • Redirects to /public/dashboard on success.
-   ──────────────────────────────────────────────────────────── */
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { mdiAccount, mdiAsterisk, mdiAlertCircle } from '@mdi/js'
-
 import SectionFullScreen from '@/components/SectionFullScreen.vue'
-import CardBox           from '@/components/CardBox.vue'
-import FormCheckRadio    from '@/components/FormCheckRadio.vue'
-import FormField         from '@/components/FormField.vue'
-import FormControl       from '@/components/FormControl.vue'
-import BaseButton        from '@/components/BaseButton.vue'
-import BaseButtons       from '@/components/BaseButtons.vue'
-import LayoutGuest       from '@/layouts/LayoutGuest.vue'
+import CardBox from '@/components/CardBox.vue'
+import FormCheckRadio from '@/components/FormCheckRadio.vue'
+import FormField from '@/components/FormField.vue'
+import FormControl from '@/components/FormControl.vue'
+import BaseButton from '@/components/BaseButton.vue'
+import BaseButtons from '@/components/BaseButtons.vue'
+import LayoutGuest from '@/layouts/LayoutGuest.vue'
+import { login as apiLogin } from '@/services/auth.js'      // ← NEW
 
-import { login as apiLogin }  from '@/services/auth.js'
-import { useAuthStore }       from '@/stores/auth.js'
-
-/* ─────────────── form state ─────────────────────────────── */
 const form = reactive({
-  login:    '',
-  pass:     '',
+  login: 'john.doe',
+  pass: 'highly-secure-password-fYjUw-',
   remember: true,
 })
 
-/* ─────────────── logic ──────────────────────────────────── */
 const router   = useRouter()
-const auth     = useAuthStore()
 const errorMsg = ref('')
 const loading  = ref(false)
 
 const submit = async () => {
   errorMsg.value = ''
-  loading.value  = true
+  loading.value = true
   try {
-    /* 1. Authenticate */
-    const { access_token } = await apiLogin({
+    const res = await apiLogin({
       username: form.login,
       password: form.pass,
     })
 
-    /* 2. Store token through Pinia */
-    await auth.setToken(access_token)      // hydrates profile + saves under 'access_token'
-    if (!form.remember && typeof localStorage !== 'undefined') {
-      // Session-only login → remove persisted copy
-      localStorage.removeItem('access_token')
+    // Persist token (simple approach)
+    if (form.remember) {
+      localStorage.setItem('jwt', res.access_token)
+    } else {
+      sessionStorage.setItem('jwt', res.access_token)
     }
 
-    /* 3. Redirect */
-    router.push('/public/dashboard')
-  } catch (err) {
-    errorMsg.value = err?.message || 'Login failed'
+    router.push('/dashboard')
+  } catch (e) {
+    errorMsg.value = e.message
   } finally {
     loading.value = false
   }
@@ -68,7 +51,7 @@ const submit = async () => {
   <LayoutGuest>
     <SectionFullScreen v-slot="{ cardClass }" bg="purplePink">
       <CardBox :class="cardClass" is-form @submit.prevent="submit">
-        <!-- ─── error banner ─── -->
+        <!-- error banner -->
         <template v-if="errorMsg">
           <div class="mb-4 flex items-center text-sm text-red-600">
             <BaseButton
@@ -78,22 +61,19 @@ const submit = async () => {
               small
               class="mr-2 pointer-events-none"
             />
-            <span class="break-words">{{ errorMsg }}</span>
+            {{ errorMsg }}
           </div>
         </template>
 
-        <!-- LOGIN -->
-        <FormField label="Username" help="Please enter your username">
+        <FormField label="Login" help="Please enter your login">
           <FormControl
             v-model="form.login"
             :icon="mdiAccount"
             name="login"
             autocomplete="username"
-            required
           />
         </FormField>
 
-        <!-- PASSWORD -->
         <FormField label="Password" help="Please enter your password">
           <FormControl
             v-model="form.pass"
@@ -101,19 +81,16 @@ const submit = async () => {
             type="password"
             name="password"
             autocomplete="current-password"
-            required
           />
         </FormField>
 
-        <!-- REMEMBER ME -->
         <FormCheckRadio
           v-model="form.remember"
           name="remember"
-          label="Remember me"
+          label="Remember"
           :input-value="true"
         />
 
-        <!-- buttons -->
         <template #footer>
           <BaseButtons>
             <BaseButton
@@ -122,7 +99,7 @@ const submit = async () => {
               :label="loading ? 'Logging in…' : 'Login'"
               :disabled="loading"
             />
-            <BaseButton to="/public/dashboard" color="info" outline label="Back" />
+            <BaseButton to="/dashboard" color="info" outline label="Back" />
           </BaseButtons>
         </template>
       </CardBox>

@@ -1,78 +1,44 @@
 <script setup>
-/* ──────────────────────────────────────────────────────────────
-   Layout with sidebar + top-bar.
-   Improvements in this revision:
-   • Reads login state (username + avatar) from auth store
-   • Top-bar menu now shows real user data
-   • Logout item actually logs the user out
-   • No other behaviour altered
-   ──────────────────────────────────────────────────────────── */
 import {
   mdiForwardburger,
   mdiBackburger,
   mdiMenu,
   mdiAccountCog,
 } from '@mdi/js'
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
-
-import { useUserMode }   from '@/stores/userMode.js'
-import { useAuthStore }  from '@/stores/auth.js'          // NEW
+import { useUserMode } from '@/stores/userMode.js'
+import menuAside       from '@/menuAside.js'
+import menuAsideAdmin  from '@/menuAsideAdmin.js'
+import menuNavBar      from '@/menuNavBar.js'
 import { useDarkModeStore } from '@/stores/darkMode.js'
+import BaseIcon        from '@/components/BaseIcon.vue'
+import FormControl     from '@/components/FormControl.vue'
+import NavBar          from '@/components/NavBar.vue'
+import NavBarItemPlain from '@/components/NavBarItemPlain.vue'
+import AsideMenu       from '@/components/AsideMenu.vue'
+import FooterBar       from '@/components/FooterBar.vue'
 
-import menuAside         from '@/menuAside.js'
-import menuAsideAdmin    from '@/menuAsideAdmin.js'
-import menuNavBarStatic  from '@/menuNavBar.js'           // renamed
-
-import BaseIcon          from '@/components/BaseIcon.vue'
-import FormControl       from '@/components/FormControl.vue'
-import NavBar            from '@/components/NavBar.vue'
-import NavBarItemPlain   from '@/components/NavBarItemPlain.vue'
-import AsideMenu         from '@/components/AsideMenu.vue'
-import FooterBar         from '@/components/FooterBar.vue'
-
-/* ─── stores & router ─────────────────────────────────────── */
+const layoutAsidePadding = 'xl:pl-60'
 const router        = useRouter()
 const userMode      = useUserMode()
-const auth          = useAuthStore()
 const darkModeStore = useDarkModeStore()
 
-/* ─── layout toggles ──────────────────────────────────────── */
-const layoutAsidePadding   = 'xl:pl-60'
 const isAsideMobileExpanded = ref(false)
 const isAsideLgActive       = ref(false)
 
-/* Collapse side-menu on navigation */
+/* collapse on navigation */
 router.beforeEach(() => {
   isAsideMobileExpanded.value = false
   isAsideLgActive.value       = false
 })
 
-/* ─── menus (sidebar + top) ───────────────────────────────── */
+/* choose sidebar menu */
 const currentMenu = computed(() =>
   userMode.isAdmin ? menuAsideAdmin : menuAside,
 )
 
-/* Build top-bar menu dynamically from static skeleton */
-const menuNavBar = computed(() => {
-  // Deep-clone to avoid mutating the imported constant
-  const menu = JSON.parse(JSON.stringify(menuNavBarStatic))
-
-  const current = menu.find((i) => i.isCurrentUser)
-  if (current) {
-    // Update label & optional avatar src; fallback keeps UI intact pre-login
-    current.label = auth.username || 'Guest'
-    current.avatar = auth.avatarUrl || undefined
-  }
-  return menu
-})
-
-/* When auth data changes (e.g. after refreshProfile), ensure menu re-computes */
-watch([() => auth.username, () => auth.avatarUrl], () => {
-  /* no-op – the computed menuNavBar will re-evaluate */
-})
-
-/* ─── admin ↔ public switch ───────────────────────────────── */
+/* switch admin ↔ public */
 const switchMode = () => {
   if (userMode.isAdmin) {
     userMode.setPublic()
@@ -83,17 +49,12 @@ const switchMode = () => {
   }
 }
 
-/* ─── navbar dropdown handler ─────────────────────────────── */
+/* handle navbar dropdown items */
 const menuClick = (_, item) => {
   if (item.isToggleLightDark) darkModeStore.set()
+  if (item.isLogout) { /* placeholder */ }
 
-  if (item.isLogout) {
-    auth.logout()
-    router.push('/login')
-    return
-  }
-
-  /* Mode-aware “My Profile” */
+  /* NEW: make “My Profile” mode-aware */
   if (item?.label === 'My Profile') {
     router.push(userMode.isAdmin ? '/admin/profile' : '/public/profile')
   }
