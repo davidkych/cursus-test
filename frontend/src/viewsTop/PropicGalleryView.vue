@@ -24,12 +24,14 @@ const images = Object.entries(files)
 <template>
   <LayoutGuest>
     <SectionFullScreen v-slot="{ cardClass }" bg="purplePink">
-      <!-- white card wrapper -->
+      <!-- white ⟷ dark-slate card wrapper -->
       <div
-        :class="[cardClass, 'bg-white rounded-lg shadow-lg']"
+        :class="[cardClass, 'bg-white dark:bg-slate-800 rounded-lg shadow-lg']"
         class="p-6 overflow-y-auto max-h-[80vh]"
       >
-        <h1 class="text-xl font-semibold mb-6 text-center">
+        <h1
+          class="text-xl font-semibold mb-6 text-center text-gray-900 dark:text-gray-100"
+        >
           Available Profile Pictures
         </h1>
 
@@ -45,9 +47,9 @@ const images = Object.entries(files)
             <img
               :src="img.src"
               :alt="`Avatar ${img.id}`"
-              class="w-32 h-32 rounded-full border object-cover object-center"
+              class="w-32 h-32 rounded-full border border-gray-200 dark:border-gray-600 object-cover object-center"
             />
-            <span class="mt-2 text-sm text-gray-700">
+            <span class="mt-2 text-sm text-gray-700 dark:text-gray-300">
               {{ img.id }}
             </span>
           </div>

@@ -48,32 +48,39 @@ const loading  = ref(false)
 const submit = async () => {
   errorMsg.value = ''
   if (form.password !== form.passwordConfirm) { errorMsg.value = 'Passwords do not match'; return }
-  if (form.email !== form.emailConfirm)       { errorMsg.value = 'E-mails do not match'; return }
-  if (!form.gender)        { errorMsg.value = 'Please select your gender'; return }
-  if (!form.dob)           { errorMsg.value = 'Please enter your date of birth'; return }
+  if (form.email !== form.emailConfirm)       { errorMsg.value = 'E-mails do not match';  return }
+  if (!form.gender)        { errorMsg.value = 'Please select your gender';                 return }
+  if (!form.dob)           { errorMsg.value = 'Please enter your date of birth';           return }
   if (new Date(form.dob) > new Date()) {
     errorMsg.value = 'Date of birth must be in the past'; return
   }
-  if (!form.country)       { errorMsg.value = 'Please select your country'; return }
-  if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture'; return }
-  if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
+  if (!form.country)       { errorMsg.value = 'Please select your country';                return }
+  if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture';             return }
+  if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions';      return }
 
   loading.value = true
   try {
     await apiRegister({
-      username:           form.username,
-      email:              form.email,
-      password:           form.password,
-      profile_pic_id:     form.profilePicId,
-      profile_pic_type:   form.profilePicType,
+      /* ── core creds ─────────────────────────────────────────── */
+      username:         form.username,
+      email:            form.email,
+      password:         form.password,
+      /* ── avatar (optional) ──────────────────────────────────── */
+      profile_pic_id:   form.profilePicId,
+      profile_pic_type: form.profilePicType,
+      /* ── NEW profile details ────────────────────────────────── */
+      gender:           form.gender,
+      dob:              form.dob,
+      country:          form.country,
+      accepted_terms:   form.acceptedTerms,
     })
     router.push('/login')
   } catch (err) {
     let message = 'Registration failed'
     const detail = err?.response?.data?.detail
     if (detail) {
-      if (typeof detail === 'string') message = detail
-      else if (Array.isArray(detail)) message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
+      if (typeof detail === 'string')      message = detail
+      else if (Array.isArray(detail))      message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
       else if (typeof detail === 'object') message = JSON.stringify(detail)
     } else if (err.message) message = err.message
     errorMsg.value = message
