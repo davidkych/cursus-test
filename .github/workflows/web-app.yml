@@ -138,24 +138,33 @@ jobs:
           echo "⏳ initial warm-up 60 s …"; sleep 60
 
           success=false
+          DEPLOY_URL="https://${{ inputs.APP }}.scm.azurewebsites.net/api/deployments/latest"
+
           for attempt in 1 2; do
             echo "🚀 ZIP-deploy attempt $attempt"
-            az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
-                             --src-path app.zip --type zip --timeout 600 || true
-            echo "📡 streaming container log …"
-            timeout 120s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
-            sleep 15
+            if az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
+                                --src-path app.zip --type zip --timeout 600; then
+              echo "📡 streaming container log …"
+              timeout 120s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
+              sleep 15
 
-            code=$(curl -s -o /dev/null -w '%{http_code}' \
-                     "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
-            if [[ "$code" == "200" ]]; then
-              success=true; break
+              code=$(curl -s -o /dev/null -w '%{http_code}' \
+                       "https://${{ inputs.APP }}.azurewebsites.net/healthz" || true)
+              if [[ "$code" == "200" ]]; then
+                success=true
+                break
+              fi
+              echo "⚠ unhealthy (HTTP $code) – backing off"
+            else
+              echo "⚠ ZIP-deploy attempt $attempt failed – investigate at $DEPLOY_URL"
             fi
-            echo "⚠ unhealthy (HTTP $code) – backing off"
             sleep $((attempt*45))
           done
 
-          $success || { echo "💥 web-app deploy failed"; exit 1; }
+          if ! $success; then
+            echo "💥 web-app deploy failed – investigate at $DEPLOY_URL"
+            exit 1
+          fi
 
       # ── Verify health endpoint (final gate) --------------------------------
       - name: Verify web-app /healthz
