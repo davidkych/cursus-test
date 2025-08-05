@@ -1,4 +1,4 @@
-# ── src/routers/auth/login.py ────────────────────────────────────────────────
+────────────────────────────────────────────────
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from passlib.hash import sha256_crypt
@@ -52,3 +52,4 @@ def login(creds: LoginIn):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     return {"access_token": _make_jwt(db_user["id"])}
+
