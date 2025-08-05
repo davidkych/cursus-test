@@ -35,7 +35,7 @@ const form = reactive({
   passwordConfirm: '',
   email: '',
   emailConfirm: '',
-  profilePicId: 1,
+  profilePicId: 1,          // default selection
   profilePicType: 'default',
   acceptedTerms: false,
 })
@@ -47,8 +47,14 @@ const loading  = ref(false)
 
 const submit = async () => {
   errorMsg.value = ''
-  if (form.password !== form.passwordConfirm) { errorMsg.value = 'Passwords do not match'; return }
-  if (form.email !== form.emailConfirm)       { errorMsg.value = 'E-mails do not match'; return }
+
+  // ── client-side validations ─────────────────────────────────────────
+  if (form.password !== form.passwordConfirm) {
+    errorMsg.value = 'Passwords do not match'; return
+  }
+  if (form.email !== form.emailConfirm) {
+    errorMsg.value = 'E-mails do not match'; return
+  }
   if (!form.gender)        { errorMsg.value = 'Please select your gender'; return }
   if (!form.dob)           { errorMsg.value = 'Please enter your date of birth'; return }
   if (new Date(form.dob) > new Date()) {
@@ -58,6 +64,7 @@ const submit = async () => {
   if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture'; return }
   if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
+  // ── call API ────────────────────────────────────────────────────────
   loading.value = true
   try {
     await apiRegister({
@@ -69,13 +76,23 @@ const submit = async () => {
     })
     router.push('/login')
   } catch (err) {
+    /* ── extract a human-readable error message ─────────────────────── */
     let message = 'Registration failed'
+
     const detail = err?.response?.data?.detail
     if (detail) {
-      if (typeof detail === 'string') message = detail
-      else if (Array.isArray(detail)) message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
-      else if (typeof detail === 'object') message = JSON.stringify(detail)
-    } else if (err.message) message = err.message
+      if (typeof detail === 'string') {
+        message = detail
+      } else if (Array.isArray(detail)) {
+        // FastAPI validation error list
+        message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
+      } else if (typeof detail === 'object') {
+        message = JSON.stringify(detail)
+      }
+    } else if (err.message) {
+      message = err.message
+    }
+
     errorMsg.value = message
   } finally {
     loading.value = false
@@ -84,6 +101,7 @@ const submit = async () => {
 
 /* ─────────────────────── gallery opener ───────────────────────────── */
 function openGallery() {
+  // Uses the hash-history URL so it works whether deployed or on dev-server
   window.open('#/propic-gallery', 'propicGallery')
 }
 </script>
@@ -151,17 +169,18 @@ function openGallery() {
 
         <!-- PROFILE PICTURE -->
         <FormField label="Profile picture">
-          <div class="flex items-center gap-2">
-            <ProfilePicSelector v-model="form.profilePicId" class="w-24" />
-            <BaseButton
-              :icon="mdiImage"
-              color="info"
-              outline
-              small
-              label="View gallery"
-              @click="openGallery"
-            />
-          </div>
+          <ProfilePicSelector v-model="form.profilePicId" />
+
+          <!-- opens gallery in a separate window/tab instead of routing away -->
+          <BaseButton
+            :icon="mdiImage"
+            color="info"
+            outline
+            small
+            class="mt-2"
+            label="View gallery"
+            @click="openGallery"
+          />
         </FormField>
 
         <!-- PASSWORD -->
