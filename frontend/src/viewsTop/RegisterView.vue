@@ -65,10 +65,16 @@ const submit = async () => {
   if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
   // ── normalize possibly object-shaped country option to a string ────
-  const countryValue =
+  const countryValueRaw =
     typeof form.country === 'object'
       ? (form.country.value ?? form.country.code ?? form.country.name ?? '')
       : form.country
+
+  // If the UI label is "Name (ABC)", extract ABC; otherwise use as-is
+  const m = typeof countryValueRaw === 'string'
+    ? countryValueRaw.match(/\(([A-Z]{3})\)\s*$/)
+    : null
+  const countryValue = (m ? m[1] : String(countryValueRaw)).toUpperCase()
 
   // ── call API with ALL collected info ────────────────────────────────
   loading.value = true
@@ -81,31 +87,15 @@ const submit = async () => {
       // new/extended fields being emitted to backend:
       gender:             form.gender,          // 'male' | 'female'
       dob:                form.dob,             // 'YYYY-MM-DD'
-      country:            countryValue,         // normalized string
+      country:            countryValue,         // ISO-3166-1 alpha-3
       profile_pic_id:     form.profilePicId,    // number
       profile_pic_type:   form.profilePicType,  // 'default' | 'custom'
       accepted_terms:     form.acceptedTerms,   // boolean
     })
     router.push('/login')
   } catch (err) {
-    /* ── extract a human-readable error message ─────────────────────── */
-    let message = 'Registration failed'
-
-    const detail = err?.response?.data?.detail
-    if (detail) {
-      if (typeof detail === 'string') {
-        message = detail
-      } else if (Array.isArray(detail)) {
-        // FastAPI validation error list
-        message = detail.map(e => e.msg ?? JSON.stringify(e)).join(' • ')
-      } else if (typeof detail === 'object') {
-        message = JSON.stringify(detail)
-      }
-    } else if (err.message) {
-      message = err.message
-    }
-
-    errorMsg.value = message
+    // fetch-based service throws Error(message) already normalized in auth.js
+    errorMsg.value = err?.message || 'Registration failed'
   } finally {
     loading.value = false
   }

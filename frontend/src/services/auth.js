@@ -13,7 +13,23 @@ function handleError(res, fallbackMsg) {
     .json()
     .catch(() => ({}))
     .then((body) => {
-      throw new Error(body.detail || fallbackMsg)
+      const d = body?.detail
+      let msg = fallbackMsg
+
+      if (typeof d === 'string') {
+        msg = d
+      } else if (Array.isArray(d)) {
+        // FastAPI validation error list
+        msg = d
+          .map((e) => e?.msg || (typeof e === 'string' ? e : JSON.stringify(e)))
+          .join(' • ')
+      } else if (d && typeof d === 'object') {
+        msg = d.msg || d.error || JSON.stringify(d)
+      } else if (body?.message && typeof body.message === 'string') {
+        msg = body.message
+      }
+
+      throw new Error(msg)
     })
 }
 
