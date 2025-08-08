@@ -6,7 +6,7 @@ const API_BASE = import.meta.env.VITE_API_BASE || ''
 
 /**
  * Convert non-2xx fetch responses into thrown Error objects,
- * extracting FastAPI-style `detail` messages when present.
+ * extracting FastAPI-style detail messages when present.
  */
 function handleError(res, fallbackMsg) {
   return res
@@ -25,9 +25,13 @@ function handleError(res, fallbackMsg) {
  *   username:           string,
  *   email:              string,
  *   password:           string,
- *   // ── NEW optional fields ───────────────────────────────
- *   profile_pic_id:     number,          // numeric ID (1, 2, 3…)
- *   profile_pic_type:   'default'|'custom'
+ *   // optional fields we now pass through from the Register form:
+ *   gender:             'male'|'female',
+ *   dob:                'YYYY-MM-DD',
+ *   country:            string,
+ *   profile_pic_id:     number,
+ *   profile_pic_type:   'default'|'custom',
+ *   accepted_terms:     boolean
  * }
  */
 export async function register(payload) {

@@ -64,15 +64,27 @@ const submit = async () => {
   if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture'; return }
   if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
-  // ── call API ────────────────────────────────────────────────────────
+  // ── normalize possibly object-shaped country option to a string ────
+  const countryValue =
+    typeof form.country === 'object'
+      ? (form.country.value ?? form.country.code ?? form.country.name ?? '')
+      : form.country
+
+  // ── call API with ALL collected info ────────────────────────────────
   loading.value = true
   try {
     await apiRegister({
       username:           form.username,
       email:              form.email,
       password:           form.password,
-      profile_pic_id:     form.profilePicId,
-      profile_pic_type:   form.profilePicType,
+
+      // new/extended fields being emitted to backend:
+      gender:             form.gender,          // 'male' | 'female'
+      dob:                form.dob,             // 'YYYY-MM-DD'
+      country:            countryValue,         // normalized string
+      profile_pic_id:     form.profilePicId,    // number
+      profile_pic_type:   form.profilePicType,  // 'default' | 'custom'
+      accepted_terms:     form.acceptedTerms,   // boolean
     })
     router.push('/login')
   } catch (err) {
