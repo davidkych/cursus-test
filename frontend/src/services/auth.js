@@ -19,7 +19,7 @@ function handleError(res, fallbackMsg) {
       if (typeof d === 'string') {
         msg = d
       } else if (Array.isArray(d)) {
-        // FastAPI validation error list
+        // FastAPI validation errors
         msg = d
           .map((e) => e?.msg || (typeof e === 'string' ? e : JSON.stringify(e)))
           .join(' • ')

@@ -40,6 +40,41 @@ const form = reactive({
   acceptedTerms: false,
 })
 
+/* Helper: safely derive ISO-3166-1 alpha-3 from many shapes */
+function extractAlpha3(input) {
+  if (!input) return ''
+  // 1) If a plain string
+  if (typeof input === 'string') {
+    // "Azerbaijan (AZE)" → AZE
+    const m = input.match(/\(([A-Z]{3})\)\s*$/)
+    if (m) return m[1]
+    // Already alpha-3?
+    if (/^[A-Za-z]{3}$/.test(input)) return input.toUpperCase()
+    return ''
+  }
+
+  // 2) If an object (common select option patterns)
+  const candidates = [
+    input.id, input.value, input.code, input.alpha3, input.iso3, input.iso_3166_1_alpha3,
+  ].filter(Boolean)
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && /^[A-Za-z]{3}$/.test(c)) return c.toUpperCase()
+  }
+
+  if (typeof input.label === 'string') {
+    const m = input.label.match(/\(([A-Z]{3})\)\s*$/)
+    if (m) return m[1]
+  }
+
+  if (typeof input.name === 'string') {
+    const m = input.name.match(/\(([A-Z]{3})\)\s*$/)
+    if (m) return m[1]
+  }
+
+  return ''
+}
+
 /* ────────────────────────── submit logic ───────────────────────────── */
 const router   = useRouter()
 const errorMsg = ref('')
@@ -64,17 +99,11 @@ const submit = async () => {
   if (!form.profilePicId)  { errorMsg.value = 'Please pick a profile picture'; return }
   if (!form.acceptedTerms) { errorMsg.value = 'Please accept the terms & conditions'; return }
 
-  // ── normalize possibly object-shaped country option to a string ────
-  const countryValueRaw =
-    typeof form.country === 'object'
-      ? (form.country.value ?? form.country.code ?? form.country.name ?? '')
-      : form.country
-
-  // If the UI label is "Name (ABC)", extract ABC; otherwise use as-is
-  const m = typeof countryValueRaw === 'string'
-    ? countryValueRaw.match(/\(([A-Z]{3})\)\s*$/)
-    : null
-  const countryValue = (m ? m[1] : String(countryValueRaw)).toUpperCase()
+  // ── normalize to alpha-3 ───────────────────────────────────────────
+  const countryValue = extractAlpha3(form.country)
+  if (!/^[A-Z]{3}$/.test(countryValue)) {
+    errorMsg.value = 'Please select a valid country (ISO alpha-3)'; return
+  }
 
   // ── call API with ALL collected info ────────────────────────────────
   loading.value = true
