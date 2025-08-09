@@ -8,7 +8,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { login as apiLogin, me as apiMe } from '@/services/auth.js'  // ← direct import; no top-level await
-import { useMainStore } from '@/stores/main.js'                      // ← NEW: to sync top-bar name
+import { useMainStore } from '@/stores/main.js'                      // ← keep top-bar name in sync
 
 /* ─────────────────────────── constants ─────────────────────────── */
 const TOKEN_KEY = 'auth.token'
@@ -82,6 +82,23 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
+      // ⟨NEW⟩ Latest login telemetry snapshot (optional; shape mirrors backend)
+      login_context?: {
+        last_login_utc?: string
+        ip?: string
+        ua?: {
+          raw?: string
+          browser?: { name?: string, version?: string }
+          os?: { name?: string, version?: string }
+          is_mobile?: boolean
+          is_tablet?: boolean
+          is_pc?: boolean
+          is_bot?: boolean
+        }
+        locale?: { client?: string|null, accept_language?: string|null }
+        timezone?: string
+        geo?: { country_iso2?: string, source?: string }
+      }
     }} */ (null),
   )
   const inited = ref(false)
@@ -92,6 +109,32 @@ export const useAuth = defineStore('auth', () => {
   const avatarUrl       = computed(() =>
     resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
   )
+
+  // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
+  const lastLoginAt = computed(() => {
+    const iso = user.value?.login_context?.last_login_utc
+    return iso ? new Date(iso).toISOString() : null
+  })
+
+  const lastLoginSummary = computed(() => {
+    const lc = user.value?.login_context
+    if (!lc) return ''
+    const parts = []
+
+    const browserName = lc.ua?.browser?.name || ''
+    const browserVer  = lc.ua?.browser?.version || ''
+    const osName      = lc.ua?.os?.name || ''
+    const osVer       = lc.ua?.os?.version || ''
+    const country     = lc.geo?.country_iso2 || ''
+    const tz          = lc.timezone || ''
+
+    if (browserName) parts.push(browserVer ? `${browserName} ${browserVer}` : browserName)
+    if (osName)      parts.push(osVer ? `${osName} ${osVer}` : osName)
+    if (country)     parts.push(country)
+    if (tz)          parts.push(tz)
+
+    return parts.join(' • ')
+  })
 
   // actions
   async function init() {
@@ -113,6 +156,19 @@ export const useAuth = defineStore('auth', () => {
         country: 'HKG',
         profile_pic_id: 1,
         profile_pic_type: 'default',
+        // Demo telemetry (optional)
+        login_context: {
+          last_login_utc: new Date().toISOString(),
+          ip: '203.0.113.42',
+          ua: {
+            browser: { name: 'Mock', version: '0' },
+            os: { name: 'MockOS', version: '0' },
+            is_pc: true,
+          },
+          locale: { client: 'en-GB', accept_language: 'en-GB' },
+          timezone: 'Europe/London',
+          geo: { country_iso2: 'GB', source: 'mock' },
+        },
       }
       // ensure top-bar picks up the username
       syncMainStoreUser(user.value)
@@ -151,6 +207,14 @@ export const useAuth = defineStore('auth', () => {
         created: new Date().toISOString(),
         profile_pic_id: 1,
         profile_pic_type: 'default',
+        login_context: {
+          last_login_utc: new Date().toISOString(),
+          ip: '203.0.113.42',
+          ua: { browser: { name: 'Mock', version: '0' }, os: { name: 'MockOS', version: '0' }, is_pc: true },
+          locale: { client: 'en-GB', accept_language: 'en-GB' },
+          timezone: 'Europe/London',
+          geo: { country_iso2: 'GB', source: 'mock' },
+        },
       }
       // sync for top-bar
       syncMainStoreUser(user.value)
@@ -197,6 +261,8 @@ export const useAuth = defineStore('auth', () => {
     isAuthenticated,
     displayName,
     avatarUrl,
+    lastLoginAt,
+    lastLoginSummary,
     // actions
     init,
     login,

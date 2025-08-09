@@ -1,4 +1,4 @@
-// modules/webapp.bicep
+// infra/modules/webapp.bicep
 targetScope = 'resourceGroup'
 
 @description('Azure region')
@@ -31,6 +31,24 @@ param aadTenantId string
 @description('Azure AD application (client) ID')
 param aadClientId string
 
+// ⟨NEW⟩ Azure Maps + telemetry integration (optional; empty to disable)
+@description('Azure Maps subscription key to enable IP geolocation (leave empty to skip)')
+param azureMapsKey string = ''
+
+@description('Login telemetry feature flag: "1" to enable, "0" to disable')
+@allowed([
+  '0'
+  '1'
+])
+param loginTelemetry string = '1'
+
+@description('Geo-IP provider selector (only "azmaps" supported)')
+@allowed([
+  'azmaps'
+  ''
+])
+param geoipProvider string = 'azmaps'
+
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
@@ -53,11 +71,20 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       appSettings: [
         { name: 'WEBSITES_PORT',                       value: '8000' }
         { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: string(timeout) }
+
+        // Cosmos wiring
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
+
+        // Scheduler wiring
         { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
         { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
+
+        // ⟨NEW⟩ Telemetry wiring (safe defaults; empty values are fine)
+        { name: 'LOGIN_TELEMETRY',                     value: loginTelemetry }
+        { name: 'GEOIP_PROVIDER',                      value: geoipProvider }
+        { name: 'AZURE_MAPS_KEY',                      value: azureMapsKey }
       ]
     }
   }

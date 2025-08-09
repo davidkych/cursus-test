@@ -81,7 +81,7 @@ jobs:
               --resource-group "$RG" --account-name "$COSMOS" \
               --principal-id "$principalId" --role-definition-id "$roleId" --scope "/"
 
-      # ── App settings -------------------------------------------------------
+      # ── App settings (no telemetry keys here; Bicep sets them) -------------
       - name: Configure Web-App settings
         shell: bash
         env:

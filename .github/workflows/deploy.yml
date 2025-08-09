@@ -40,7 +40,7 @@ jobs:
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
-      JWT_SECRET:        ${{ secrets.JWT_SECRET }}   # ⟨NEW⟩
+      JWT_SECRET:        ${{ secrets.JWT_SECRET }}   # Maps key now injected by Bicep
 
   # ───────────────────────── scheduler ─────────────────────────
   scheduler:
@@ -53,6 +53,7 @@ jobs:
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
   # ──────────────────────── static-web ─────────────────────────
   static_web:
     needs: infra
@@ -60,6 +61,6 @@ jobs:
     with:
       RG:               ${{ needs.infra.outputs.rg }}
       STATIC_SITE_NAME: ${{ needs.infra.outputs.static_site }}
-      APP:              ${{ needs.infra.outputs.app }}       # ← NEW
+      APP:              ${{ needs.infra.outputs.app }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}

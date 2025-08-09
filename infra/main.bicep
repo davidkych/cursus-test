@@ -26,6 +26,9 @@ var appName        = '${prefix}-app'
 var schedFuncName  = '${prefix}-sched'
 var staticSiteName = '${prefix}-web'
 
+// Keep it globally unique & compliant: lower, no dashes + short unique suffix
+var mapsAccountName = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+
 // 1) App-Service Plan --------------------------------------------------------
 module planModule './modules/plan.bicep' = {
   name: 'plan'
@@ -46,7 +49,16 @@ module cosmosModule './modules/cosmos.bicep' = {
   dependsOn: [ planModule ]
 }
 
-// 3) FastAPI Web-App ---------------------------------------------------------
+// 3) Azure Maps (Gen2)  ------------------------------------------------------
+module mapsModule './modules/maps.bicep' = {
+  name: 'maps'
+  params: {
+    location:        location
+    mapsAccountName: mapsAccountName
+  }
+}
+
+// 4) FastAPI Web-App ---------------------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -60,11 +72,17 @@ module webAppModule './modules/webapp.bicep' = {
     schedFuncName:  schedFuncName
     aadTenantId:    aadTenantId
     aadClientId:    aadClientId
+
+    // ⟨NEW⟩ Pipe Azure Maps primary key into app settings
+    azureMapsKey:   mapsModule.outputs.mapsPrimaryKey
+    // Optional: set defaults here so single deployment is enough
+    loginTelemetry: '1'
+    geoipProvider:  'azmaps'
   }
-  dependsOn: [ cosmosModule, planModule ]
+  dependsOn: [ cosmosModule, planModule, mapsModule ]
 }
 
-// 4) Durable Scheduler -------------------------------------------------------
+// 5) Durable Scheduler -------------------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -79,7 +97,7 @@ module schedulerModule './modules/scheduler.bicep' = {
   dependsOn: [ cosmosModule, planModule ]
 }
 
-// 5) Static Web-App (Vue frontend) ------------------------------------------
+// 6) Static Web-App (Vue frontend) ------------------------------------------
 module staticWebModule './modules/staticweb.bicep' = {
   name: 'staticWeb'
   params: {
@@ -93,4 +111,5 @@ output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionN
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
 output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
 output staticSiteName        string = staticWebModule.outputs.staticSiteName
-output webAppName            string = webAppModule.outputs.webAppName    // ← NEW
+output webAppName            string = webAppModule.outputs.webAppName    // ← existing
+output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)

@@ -49,6 +49,22 @@ jobs:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
+      # ── Ensure RP for Azure Maps is registered (idempotent) ────────────────
+      - name: Ensure Microsoft.Maps resource provider is registered
+        shell: bash
+        run: |
+          set -eo pipefail
+          az provider register --namespace Microsoft.Maps || true
+          for i in {1..30}; do
+            state=$(az provider show -n Microsoft.Maps --query registrationState -o tsv || true)
+            if [[ "$state" == "Registered" ]]; then
+              echo "✅ Microsoft.Maps provider is Registered"
+              break
+            fi
+            echo "⏳ Microsoft.Maps registrationState=$state – waiting …"
+            sleep 5
+          done
+
       # ── Ensure the resource-group exists (idempotent) ──────────────
       - name: Ensure resource group exists
         shell: bash

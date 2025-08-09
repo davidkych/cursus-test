@@ -120,9 +120,23 @@ export async function login(payload) {
     return Promise.resolve({ access_token: 'mock.jwt.token', token_type: 'bearer' })
   }
 
+  // Attach client-only context via headers (server can’t derive reliably)
+  const tz =
+    (typeof Intl !== 'undefined' &&
+      Intl.DateTimeFormat &&
+      Intl.DateTimeFormat().resolvedOptions &&
+      Intl.DateTimeFormat().resolvedOptions().timeZone) ||
+    ''
+  const locale = (typeof navigator !== 'undefined' && navigator.language) || ''
+
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // New headers for telemetry
+      'X-Client-Timezone': tz,
+      'X-Client-Locale': locale,
+    },
     body: JSON.stringify(payload),
   })
   if (!res.ok) await handleError(res, 'Login failed')
@@ -134,7 +148,9 @@ export async function login(payload) {
  * Returns a profile like:
  * {
  *   id, username, email, created, gender, dob, country,
- *   profile_pic_id, profile_pic_type
+ *   profile_pic_id, profile_pic_type,
+ *   // NEW (optional):
+ *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
  * }
  */
 export async function me() {
@@ -149,6 +165,15 @@ export async function me() {
       country: 'HKG',
       profile_pic_id: 1,
       profile_pic_type: 'default',
+      // Example shape; real backend may omit or differ in mock
+      login_context: {
+        last_login_utc: new Date().toISOString(),
+        ip: '203.0.113.42',
+        ua: { browser: { name: 'Mock', version: '0' }, os: { name: 'MockOS', version: '0' } },
+        locale: { client: 'en-GB', accept_language: 'en-GB' },
+        timezone: 'Europe/London',
+        geo: { country_iso2: 'GB', source: 'mock' },
+      },
     })
   }
 

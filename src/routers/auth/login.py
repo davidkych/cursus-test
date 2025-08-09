@@ -1,5 +1,5 @@
 # ── src/routers/auth/login.py ────────────────────────────────────────────────
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from passlib.hash import sha256_crypt
 from azure.cosmos import CosmosClient, exceptions
@@ -72,6 +72,10 @@ def _find_user(identifier: str):
         u = _get_user_by_username(identifier) or _get_user_by_email(identifier)
     return u
 
+# ───────────────────────── telemetry import ─────────────────────
+# Best-effort login telemetry; writes only after successful auth.
+from telemetry import build_login_context, telemetry_enabled  # noqa: E402
+
 # ──────────────────────────── Router ────────────────────────────
 router = APIRouter(
     prefix="/api/auth",
@@ -79,16 +83,29 @@ router = APIRouter(
 )
 
 @router.post("/login", response_model=TokenOut)
-def login(creds: LoginIn):
+def login(creds: LoginIn, request: Request):
     # Treat creds.username as a generic "identifier" (username or e-mail)
     identifier = creds.username.strip()
 
     db_user = _find_user(identifier)
     if not db_user:
+        # Failed login: DO NOT touch any stored telemetry
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
 
     if not _verify_pwd(creds.password, db_user["password"]):
+        # Failed login: DO NOT touch any stored telemetry
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
+
+    # ── Successful login only: collect & persist latest telemetry snapshot ──
+    try:
+        if telemetry_enabled():
+            context = build_login_context(request)  # best-effort; never raises
+            db_user["login_context"] = context
+            # Use upsert to overwrite the latest snapshot without relying on ETags.
+            _users.upsert_item(db_user)
+    except Exception:
+        # Never block login on telemetry failure
+        pass
 
     # For JWT sub, continue to use the stable username/id key
     return {"access_token": _make_jwt(db_user["id"])}
