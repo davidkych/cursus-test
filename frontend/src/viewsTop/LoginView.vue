@@ -1,26 +1,34 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   mdiAccount,
   mdiAsterisk,
   mdiAlertCircle,
+  mdiCheck,
 } from '@mdi/js'
 
 import SectionFullScreen from '@/components/SectionFullScreen.vue'
 import CardBox           from '@/components/CardBox.vue'
 import FormField         from '@/components/FormField.vue'
 import FormControl       from '@/components/FormControl.vue'
+import FormCheckRadio    from '@/components/FormCheckRadio.vue'
 import BaseButton        from '@/components/BaseButton.vue'
 import BaseButtons       from '@/components/BaseButtons.vue'
 import LayoutGuest       from '@/layouts/LayoutGuest.vue'
 
 import { login as apiLogin } from '@/services/auth.js'
 
+/* ────────────────────────── constants ─────────────────────────────── */
+const IDENTIFIER_KEY = 'login.identifier'
+const REMEMBER_KEY   = 'login.remember'
+
 /* ────────────────────────── form model ─────────────────────────────── */
 const form = reactive({
-  username: '',
+  /** Username *or* e-mail. We still post it as `username` to the API for now. */
+  identifier: '',
   password: '',
+  remember: false,
 })
 
 /* ───────────────────────────── logic ───────────────────────────────── */
@@ -28,11 +36,37 @@ const router   = useRouter()
 const errorMsg = ref('')
 const loading  = ref(false)
 
+/** Load remembered identifier on mount (if opted-in previously) */
+onMounted(() => {
+  try {
+    const remembered = localStorage.getItem(REMEMBER_KEY)
+    if (remembered === '1') {
+      form.remember   = true
+      form.identifier = localStorage.getItem(IDENTIFIER_KEY) || ''
+    }
+  } catch (_) { /* ignore storage errors */ }
+})
+
 const submit = async () => {
   errorMsg.value = ''
   loading.value  = true
   try {
-    await apiLogin(form)
+    // NOTE: Backend still expects { username, password }.
+    // If the user types an e-mail, this will work after the backend update
+    // you mentioned for the next step.
+    await apiLogin({ username: form.identifier, password: form.password })
+
+    // remember-me behavior
+    try {
+      if (form.remember) {
+        localStorage.setItem(REMEMBER_KEY, '1')
+        localStorage.setItem(IDENTIFIER_KEY, form.identifier)
+      } else {
+        localStorage.removeItem(REMEMBER_KEY)
+        localStorage.removeItem(IDENTIFIER_KEY)
+      }
+    } catch (_) { /* ignore storage errors */ }
+
     // ── redirect fixed: go to public dashboard ───────────────
     router.push('/public/dashboard')
   } catch (err) {
@@ -65,12 +99,12 @@ const submit = async () => {
           </div>
         </template>
 
-        <!-- USERNAME -->
-        <FormField label="Username">
+        <!-- IDENTIFIER (username or e-mail) -->
+        <FormField label="Username or E-mail">
           <FormControl
-            v-model="form.username"
+            v-model="form.identifier"
             :icon="mdiAccount"
-            name="username"
+            name="identifier"
             autocomplete="username"
             required
           />
@@ -87,6 +121,16 @@ const submit = async () => {
             required
           />
         </FormField>
+
+        <!-- REMEMBER ME -->
+        <FormCheckRadio
+          v-model="form.remember"
+          name="remember"
+          :input-value="true"
+          label="Remember me"
+          :icon="mdiCheck"
+          class="mb-2"
+        />
 
         <!-- buttons -->
         <template #footer>
