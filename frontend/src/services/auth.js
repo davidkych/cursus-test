@@ -3,6 +3,8 @@
 
 // Prefer an environment variable; fall back to same-origin
 const API_BASE = import.meta.env.VITE_API_BASE || ''
+const TOKEN_KEY = 'auth.token'
+const MOCK = import.meta.env?.VITE_AUTH_MOCK === '1'
 
 /**
  * Convert non-2xx fetch responses into thrown Error objects,
@@ -33,6 +35,48 @@ function handleError(res, fallbackMsg) {
     })
 }
 
+/* ─────────────────────────── token helpers ─────────────────────────── */
+function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return null
+  }
+}
+function clearToken() {
+  try {
+    localStorage.removeItem(TOKEN_KEY)
+  } catch { /* ignore */ }
+}
+
+/* ─────────────────────────── authFetch ───────────────────────────────
+   Wrapper around fetch that injects Authorization header (if token present)
+   and silently clears token on 401 (expiry) per requirement #5. */
+export async function authFetch(url, init = {}) {
+  const headers = new Headers(init.headers || {})
+  const token = getToken()
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  // Do not force Content-Type; callers set it when needed.
+  headers.set('Accept', 'application/json')
+
+  const res = await fetch(url, { ...init, headers })
+
+  if (res.status === 401) {
+    // Silent logout: clear token; let caller route to /login on next nav.
+    clearToken()
+    // Try to parse error for consistency
+    try {
+      await handleError(res, 'Unauthorized')
+    } catch (err) {
+      throw err
+    }
+  }
+
+  return res
+}
+
+/* ─────────────────────────── API calls ─────────────────────────────── */
+
 /**
  * Register a new user.
  *
@@ -51,6 +95,16 @@ function handleError(res, fallbackMsg) {
  * }
  */
 export async function register(payload) {
+  if (MOCK) {
+    // Minimal happy-path mock for dev convenience
+    return Promise.resolve({
+      id: payload.username,
+      username: payload.username,
+      email: payload.email,
+      created: new Date().toISOString(),
+    })
+  }
+
   const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -61,11 +115,44 @@ export async function register(payload) {
 }
 
 export async function login(payload) {
+  if (MOCK) {
+    // Issue a fake token; store reads it, not this layer.
+    return Promise.resolve({ access_token: 'mock.jwt.token', token_type: 'bearer' })
+  }
+
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
   if (!res.ok) await handleError(res, 'Login failed')
+  return res.json()
+}
+
+/**
+ * Get current user profile (requires Authorization bearer token).
+ * Returns a profile like:
+ * {
+ *   id, username, email, created, gender, dob, country,
+ *   profile_pic_id, profile_pic_type
+ * }
+ */
+export async function me() {
+  if (MOCK) {
+    return Promise.resolve({
+      id: 'mock-user',
+      username: 'mockuser',
+      email: 'mock@example.com',
+      created: new Date().toISOString(),
+      gender: 'male',
+      dob: '1990-01-01',
+      country: 'HKG',
+      profile_pic_id: 1,
+      profile_pic_type: 'default',
+    })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/me`, { method: 'GET' })
+  if (!res.ok) await handleError(res, 'Failed to fetch profile')
   return res.json()
 }

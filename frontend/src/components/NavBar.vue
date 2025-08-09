@@ -1,10 +1,12 @@
 <script setup>
 import { ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { mdiClose, mdiDotsVertical } from '@mdi/js'
 import { containerMaxW } from '@/config.js'
 import BaseIcon from '@/components/BaseIcon.vue'
 import NavBarMenuList from '@/components/NavBarMenuList.vue'
 import NavBarItemPlain from '@/components/NavBarItemPlain.vue'
+import { useAuth } from '@/stores/auth.js'
 
 defineProps({
   menu: {
@@ -15,11 +17,22 @@ defineProps({
 
 const emit = defineEmits(['menu-click'])
 
-const menuClick = (event, item) => {
-  emit('menu-click', event, item)
-}
+const router = useRouter()
+const auth = useAuth()
 
 const isMenuNavBarActive = ref(false)
+
+const menuClick = (event, item) => {
+  // Intercept logout and perform real sign-out
+  if (item && item.isLogout) {
+    event?.preventDefault?.()
+    auth.logout()
+    isMenuNavBarActive.value = false
+    router.replace('/login')
+    return
+  }
+  emit('menu-click', event, item)
+}
 </script>
 
 <template>
@@ -30,11 +43,15 @@ const isMenuNavBarActive = ref(false)
       <div class="flex flex-1 items-stretch h-14">
         <slot />
       </div>
+
+      <!-- Mobile menu toggle -->
       <div class="flex-none items-stretch flex h-14 lg:hidden">
         <NavBarItemPlain @click.prevent="isMenuNavBarActive = !isMenuNavBarActive">
           <BaseIcon :path="isMenuNavBarActive ? mdiClose : mdiDotsVertical" size="24" />
         </NavBarItemPlain>
       </div>
+
+      <!-- The menu list (contains the current user item and logout) -->
       <div
         class="max-h-screen-menu overflow-y-auto lg:overflow-visible absolute w-screen top-14 left-0 bg-gray-50 shadow-lg lg:w-auto lg:flex lg:static lg:shadow-none dark:bg-slate-800"
         :class="[isMenuNavBarActive ? 'block' : 'hidden']"

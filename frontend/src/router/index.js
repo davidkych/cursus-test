@@ -4,10 +4,10 @@ import { resolveView } from '@/router/resolveView.js'
 // ── Top-level (guest) views — imported directly --------------------------------
 import StyleView from '@/viewsTop/StyleView.vue'
 
-const LoginView        = () => import('@/viewsTop/LoginView.vue')
-const RegisterView     = () => import('@/viewsTop/RegisterView.vue')
-const ErrorView        = () => import('@/viewsTop/ErrorView.vue')
-const PropicGalleryView = () => import('@/viewsTop/PropicGalleryView.vue')   // ← NEW
+const LoginView         = () => import('@/viewsTop/LoginView.vue')
+const RegisterView      = () => import('@/viewsTop/RegisterView.vue')
+const ErrorView         = () => import('@/viewsTop/ErrorView.vue')
+const PropicGalleryView = () => import('@/viewsTop/PropicGalleryView.vue')
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Route groups
@@ -15,7 +15,7 @@ const PropicGalleryView = () => import('@/viewsTop/PropicGalleryView.vue')   // 
 
 // 1. Guest / top routes (no prefix)
 const topRoutes = [
-  // Landing: always redirect to the public dashboard
+  // Landing: always redirect to the public dashboard (guard may refine)
   {
     path: '/',
     redirect: '/public/dashboard',
@@ -45,7 +45,7 @@ const topRoutes = [
     component: ErrorView,
   },
   {
-    meta: { title: 'Profile pictures' },          // ← NEW
+    meta: { title: 'Profile pictures' },
     path: '/propic-gallery',
     name: 'propic-gallery',
     component: PropicGalleryView,
@@ -142,6 +142,48 @@ const router = createRouter({
   scrollBehavior(to, from, savedPosition) {
     return savedPosition || { top: 0 }
   },
+})
+
+/* ─────────────────────────── Global auth guard ────────────────────────────── */
+const TOKEN_KEY = 'auth.token'
+const MOCK = import.meta.env?.VITE_AUTH_MOCK === '1'
+
+function hasToken() {
+  try {
+    return !!localStorage.getItem(TOKEN_KEY)
+  } catch {
+    return false
+  }
+}
+function requiresAuth(path) {
+  return path.startsWith('/public/') || path.startsWith('/admin/')
+}
+
+router.beforeEach((to, from, next) => {
+  // ⟨DEV behavior⟩ When mock mode is ON, bypass all auth redirects.
+  if (MOCK) {
+    if (to.path === '/') return next('/public/dashboard')
+    return next()
+  }
+
+  const authed = hasToken()
+
+  if (to.path === '/') {
+    next(authed ? '/public/dashboard' : '/login')
+    return
+  }
+
+  if (requiresAuth(to.path) && !authed) {
+    next({ name: 'login' })
+    return
+  }
+
+  if (to.name === 'login' && authed) {
+    next('/public/dashboard')
+    return
+  }
+
+  next()
 })
 
 export default router

@@ -1,12 +1,20 @@
 <script setup>
-import { useMainStore } from '@/stores/main'
+import { useAuth } from '@/stores/auth.js'
 import UserAvatar from '@/components/UserAvatar.vue'
 
-const mainStore = useMainStore()
+/**
+ * Switch from main store (sample data) to real auth store.
+ * Keeps the external API of this wrapper the same: it still renders <UserAvatar>
+ * and forwards slots, but sources the current user's name & avatar from auth.
+ */
+const auth = useAuth()
 </script>
 
 <template>
-  <UserAvatar :username="mainStore.userName" :avatar="mainStore.userAvatar">
+  <UserAvatar
+    :username="auth.displayName || 'Guest'"
+    :avatar="auth.avatarUrl"
+  >
     <slot />
   </UserAvatar>
 </template>

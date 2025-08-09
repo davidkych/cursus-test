@@ -4,6 +4,7 @@ import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
 import { useMainStore } from '@/stores/main.js'
+import { useAuth } from '@/stores/auth.js'
 
 import './css/main.css'
 
@@ -11,14 +12,26 @@ import './css/main.css'
 const pinia = createPinia()
 
 // Create Vue app
-createApp(App).use(router).use(pinia).mount('#app')
+const app = createApp(App)
+app.use(router).use(pinia)
 
-// Init main store
-const mainStore = useMainStore(pinia)
+// Bootstrap: ensure auth state is loaded before first render
+;(async () => {
+  try {
+    const auth = useAuth(pinia)
+    await auth.init() // reads token, fetches /api/auth/me (or mock)
+  } catch {
+    // ignore init errors; guards will handle redirects
+  }
 
-// Fetch sample data
-mainStore.fetchSampleClients()
-mainStore.fetchSampleHistory()
+  // Mount the app after auth is ready so avatar/name render correctly
+  app.mount('#app')
+
+  // Init main store (sample data; unchanged behavior)
+  const mainStore = useMainStore(pinia)
+  mainStore.fetchSampleClients()
+  mainStore.fetchSampleHistory()
+})()
 
 // Dark mode
 // Uncomment, if you'd like to restore persisted darkMode setting, or use `prefers-color-scheme: dark`. Make sure to uncomment localStorage block in src/stores/darkMode.js

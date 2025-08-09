@@ -17,7 +17,7 @@ import BaseButton        from '@/components/BaseButton.vue'
 import BaseButtons       from '@/components/BaseButtons.vue'
 import LayoutGuest       from '@/layouts/LayoutGuest.vue'
 
-import { login as apiLogin } from '@/services/auth.js'
+import { useAuth } from '@/stores/auth.js'
 
 /* ────────────────────────── constants ─────────────────────────────── */
 const IDENTIFIER_KEY = 'login.identifier'
@@ -36,8 +36,16 @@ const router   = useRouter()
 const errorMsg = ref('')
 const loading  = ref(false)
 
+const auth = useAuth()
+
 /** Load remembered identifier on mount (if opted-in previously) */
 onMounted(() => {
+  // If already logged in, bounce to dashboard (nice-to-have; guard also covers this)
+  if (auth.isAuthenticated) {
+    router.replace('/public/dashboard')
+    return
+  }
+
   try {
     const remembered = localStorage.getItem(REMEMBER_KEY)
     if (remembered === '1') {
@@ -51,10 +59,8 @@ const submit = async () => {
   errorMsg.value = ''
   loading.value  = true
   try {
-    // NOTE: Backend still expects { username, password }.
-    // If the user types an e-mail, this will work after the backend update
-    // you mentioned for the next step.
-    await apiLogin({ username: form.identifier, password: form.password })
+    // Treat identifier as "username or email" — backend accepts it as `username` field
+    await auth.login({ username: form.identifier, password: form.password })
 
     // remember-me behavior
     try {
@@ -70,11 +76,7 @@ const submit = async () => {
     // ── redirect fixed: go to public dashboard ───────────────
     router.push('/public/dashboard')
   } catch (err) {
-    let message = 'Login failed'
-    const detail = err?.response?.data?.detail
-    if (detail) message = typeof detail === 'string' ? detail : JSON.stringify(detail)
-    else if (err.message) message = err.message
-    errorMsg.value = message
+    errorMsg.value = err?.message || 'Login failed'
   } finally {
     loading.value = false
   }
