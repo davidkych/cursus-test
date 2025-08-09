@@ -1,24 +1,13 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars (per your decision).
+// - Uses only built-in /assets/propics/*.png for avatars.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { login as apiLogin } from '@/services/auth.js'
-
-// NOTE: we'll call api.me() once you add it next step.
-let apiMe = null
-try {
-  // Soft import to avoid breaking dev until services/auth.js is updated.
-  // eslint-disable-next-line import/no-unresolved
-  const mod = await import('@/services/auth.js')
-  apiMe = mod.me
-} catch (_) {
-  /* services/auth.js will add me() in a later step */
-}
+import { login as apiLogin, me as apiMe } from '@/services/auth.js'  // ← direct import; no top-level await
 
 /* ─────────────────────────── constants ─────────────────────────── */
 const TOKEN_KEY = 'auth.token'
@@ -116,7 +105,7 @@ export const useAuth = defineStore('auth', () => {
       return
     }
 
-    if (token.value && apiMe) {
+    if (token.value) {
       try {
         user.value = await apiMe()
       } catch {
@@ -154,17 +143,14 @@ export const useAuth = defineStore('auth', () => {
     token.value = res?.access_token || null
     writeToken(token.value)
 
-    // Fetch current profile (requires /api/auth/me)
-    if (apiMe) {
-      try {
-        user.value = await apiMe()
-      } catch {
-        // If we fail to fetch profile, treat as unauthenticated
-        token.value = null
-        writeToken(null)
-        user.value = null
-        throw new Error('Failed to fetch user profile')
-      }
+    // Fetch current profile
+    try {
+      user.value = await apiMe()
+    } catch {
+      token.value = null
+      writeToken(null)
+      user.value = null
+      throw new Error('Failed to fetch user profile')
     }
   }
 
