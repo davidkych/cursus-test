@@ -1,6 +1,8 @@
+<!-- frontend/src/viewsPublic/ProfileView.vue -->
 <script setup>
-import { reactive } from 'vue'
+import { reactive, computed } from 'vue'
 import { useMainStore } from '@/stores/main'
+import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
 import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
@@ -15,6 +17,34 @@ import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
 
 const mainStore = useMainStore()
+
+/* ⟨NEW⟩ Login telemetry (from auth store) */
+const auth = useAuth()
+const lc = computed(() => auth.user?.login_context || null)
+const ip = computed(() => lc.value?.ip || '')
+const browser = computed(() => {
+  const b = lc.value?.ua?.browser || {}
+  return [b.name, b.version].filter(Boolean).join(' ')
+})
+const os = computed(() => {
+  const o = lc.value?.ua?.os || {}
+  return [o.name, o.version].filter(Boolean).join(' ')
+})
+const device = computed(() => {
+  const u = lc.value?.ua || {}
+  if (u.is_bot) return 'Bot'
+  if (u.is_mobile) return 'Mobile'
+  if (u.is_tablet) return 'Tablet'
+  if (u.is_pc) return 'Desktop'
+  return ''
+})
+const country = computed(() => lc.value?.geo?.country_iso2 || '')
+const timezone = computed(() => lc.value?.timezone || '')
+const localePref = computed(() => lc.value?.locale?.client || lc.value?.locale?.accept_language || '')
+const lastLogin = computed(() => {
+  const iso = lc.value?.last_login_utc
+  return iso ? new Date(iso).toLocaleString() : ''
+})
 
 const profileForm = reactive({
   name: mainStore.userName,
@@ -52,6 +82,20 @@ const submitPass = () => {
       </SectionTitleLineWithButton>
 
       <UserCard class="mb-6" />
+
+      <!-- ⟨NEW⟩ Telemetry panel: shows right after the Howdy greeting -->
+      <CardBox v-if="lc" class="mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Last login:</span> <span class="text-gray-800 dark:text-gray-100">{{ lastLogin || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">IP:</span> <span class="text-gray-800 dark:text-gray-100">{{ ip || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Browser:</span> <span class="text-gray-800 dark:text-gray-100">{{ browser || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">OS:</span> <span class="text-gray-800 dark:text-gray-100">{{ os || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Device:</span> <span class="text-gray-800 dark:text-gray-100">{{ device || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Country:</span> <span class="text-gray-800 dark:text-gray-100">{{ country || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Timezone:</span> <span class="text-gray-800 dark:text-gray-100">{{ timezone || '—' }}</span></div>
+          <div><span class="font-semibold text-gray-700 dark:text-gray-200">Locale:</span> <span class="text-gray-800 dark:text-gray-100">{{ localePref || '—' }}</span></div>
+        </div>
+      </CardBox>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CardBox is-form @submit.prevent="submitProfile">
