@@ -8,6 +8,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { login as apiLogin, me as apiMe } from '@/services/auth.js'  // ← direct import; no top-level await
+import { useMainStore } from '@/stores/main.js'                      // ← NEW: to sync top-bar name
 
 /* ─────────────────────────── constants ─────────────────────────── */
 const TOKEN_KEY = 'auth.token'
@@ -52,6 +53,18 @@ function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
   // Only 'default' supported for now
   const id = Number(profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
+}
+
+/** Keep main store's display name & e-mail in sync with the auth user. */
+function syncMainStoreUser(u) {
+  const name  = u?.username || ''
+  const email = u?.email || ''
+  try {
+    const main = useMainStore()
+    main.setUser({ name, email })
+  } catch {
+    // Pinia may not be mounted yet during early init; safe to ignore
+  }
 }
 
 /* ─────────────────────────── store ─────────────────────────────── */
@@ -101,6 +114,8 @@ export const useAuth = defineStore('auth', () => {
         profile_pic_id: 1,
         profile_pic_type: 'default',
       }
+      // ensure top-bar picks up the username
+      syncMainStoreUser(user.value)
       inited.value = true
       return
     }
@@ -108,6 +123,8 @@ export const useAuth = defineStore('auth', () => {
     if (token.value) {
       try {
         user.value = await apiMe()
+        // ensure top-bar picks up the username after refresh
+        syncMainStoreUser(user.value)
       } catch {
         // Token invalid/expired → clear
         token.value = null
@@ -135,6 +152,8 @@ export const useAuth = defineStore('auth', () => {
         profile_pic_id: 1,
         profile_pic_type: 'default',
       }
+      // sync for top-bar
+      syncMainStoreUser(user.value)
       return
     }
 
@@ -146,6 +165,8 @@ export const useAuth = defineStore('auth', () => {
     // Fetch current profile
     try {
       user.value = await apiMe()
+      // sync for top-bar
+      syncMainStoreUser(user.value)
     } catch {
       token.value = null
       writeToken(null)
@@ -156,13 +177,15 @@ export const useAuth = defineStore('auth', () => {
 
   function setUser(u) {
     user.value = u
+    // keep main store in sync when caller updates the user programmatically
+    syncMainStoreUser(user.value)
   }
 
   function logout() {
     token.value = null
     user.value  = null
     writeToken(null)
-    // Redirection is handled by caller (NavBar or route guard)
+    // Not resetting main store name here; authenticated layouts usually disappear after logout.
   }
 
   return {
