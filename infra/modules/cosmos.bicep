@@ -7,6 +7,18 @@ param location string
 @description('Name of the app (for account naming)')
 param appName string
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Create-once flags / names (NEW for codes container)
+// ─────────────────────────────────────────────────────────────────────────────
+@description('Create the codes container on this deployment. Leave false for existing envs to avoid PK-change errors.')
+param createCodesContainer bool = false
+
+@description('Codes container name (only used if createCodesContainer = true)')
+param codesContainerName string = 'codes'
+
+@description('Partition key path for the codes container (creation time only)')
+param codesPartitionKeyPath string = '/code'
+
 // ---------------------------------------------------------------------------
 // Account name – keep it short & globally unique
 // ---------------------------------------------------------------------------
@@ -77,7 +89,7 @@ resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // ---------------------------------------------------------------------------
-// Users container (shared RU/s)
+// Users container (shared RU/s) — unchanged
 // ---------------------------------------------------------------------------
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
@@ -102,21 +114,31 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
 }
 
 // ---------------------------------------------------------------------------
-// NEW: Codes container (per-item TTL; code id as partition key)
+// Codes container (NEW) — create-once gate
+// IMPORTANT: Cosmos partition key is immutable after creation.
+//            Keep this conditional to avoid redeploy failures.
 // ---------------------------------------------------------------------------
-resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = if (createCodesContainer) {
   parent: cosmosDb
-  name:   'codes'
+  name:   codesContainerName
   properties: {
     resource: {
-      id: 'codes'
+      id: codesContainerName
       partitionKey: {
-        paths: [ '/id' ]   // the code itself is the document id
+        paths: [ codesPartitionKeyPath ] // e.g., '/code'
         kind:  'Hash'
       }
-      // Enable TTL at container level; items can set "ttl" for auto-purge.
-      defaultTtl: -1
-      // Default indexing is fine; keep simple for point reads by /id.
+      // Typical indexes are fine by default; add/adjust as needed
+      indexingPolicy: {
+        automatic: true
+        indexingMode: 'consistent'
+      }
+      // Unique code values (case-sensitive)
+      uniqueKeyPolicy: {
+        uniqueKeys: [
+          { paths: [ '/code' ] }
+        ]
+      }
     }
     options: {}
   }
