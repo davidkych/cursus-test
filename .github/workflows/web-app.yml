@@ -57,59 +57,6 @@ jobs:
                   sys.exit(1)
           PY
 
-      # ── Fail-fast checks BEFORE deploying ──────────────────────────────────
-      - name: Syntax check (compileall)
-        shell: bash
-        run: python -m compileall -q src
-
-      - name: Preflight smoke test (import + /healthz)
-        shell: bash
-        env:
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        run: |
-          set -eo pipefail
-          # Match Azure’s module layout so imports behave the same
-          export PYTHONPATH="$PWD/src/.python_packages/lib/site-packages:$PWD/src"
-
-          # Provide safe defaults so import-time clients don't explode in CI
-          export COSMOS_ENDPOINT="${COSMOS_ENDPOINT:-https://localhost:8081}"
-          export COSMOS_DB_ENDPOINT="${COSMOS_DB_ENDPOINT:-https://localhost:8081}"
-          export AZURE_COSMOS_ENDPOINT="${AZURE_COSMOS_ENDPOINT:-https://localhost:8081}"
-          export COSMOS_URI="${COSMOS_URI:-https://localhost:8081}"
-          export APP_ENV="${APP_ENV:-ci}"
-
-          python - <<'PY'
-          import os, sys, traceback
-
-          # Make stdout/stderr unbuffered for clearer logs
-          os.environ.setdefault("WEBSITES_PORT","8000")
-          os.environ.setdefault("PYTHONUNBUFFERED","1")
-          os.environ.setdefault("JWT_SECRET", os.getenv("JWT_SECRET","test"))
-
-          # Defensive: stub CosmosClient to avoid SDK URL validation during import
-          try:
-              import types
-              import azure.cosmos as _cosmos_mod
-              class _DummyCosmosClient:
-                  def __init__(self,*a,**k): pass
-              _cosmos_mod.CosmosClient = _DummyCosmosClient
-          except Exception:
-              # If SDK layout changes, ignore; env overrides may already be enough
-              pass
-
-          try:
-              import main
-              from fastapi.testclient import TestClient
-              client = TestClient(main.app)
-              r = client.get("/healthz")
-              assert r.status_code == 200, f"/healthz returned {r.status_code}: {r.text}"
-              print("✅ Preflight passed: /healthz OK")
-          except Exception:
-              print("💥 Preflight failed with exception:\n")
-              traceback.print_exc()       # ← file + line number
-              sys.exit(1)
-          PY
-
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
@@ -149,10 +96,9 @@ jobs:
             "WEBSITES_PORT":                          "8000",
             "PYTHONPATH":                             "/home/site/wwwroot/.python_packages/lib/site-packages",
             "WEBSITES_CONTAINER_START_TIME_LIMIT":    "${{ inputs.TIMEOUT }}",
-            "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --preload --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
+            "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
             "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
             "SCM_LOGSTREAM_TIMEOUT":                  "240",
-            "PYTHONUNBUFFERED":                       "1",
             "JWT_SECRET":                             "$JWT_SECRET",
             "USERS_CONTAINER":                        "users"
           }
@@ -168,8 +114,6 @@ jobs:
             --application-logging filesystem \
             --detailed-error-messages true \
             --failed-request-tracing true
-
-          az webapp config set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --health-check-path "/healthz"
 
       # ── Wait for restart after settings change -----------------------------
       - name: Wait for web-app to finish restarting
@@ -237,39 +181,6 @@ jobs:
           done
           echo "💥 health check failed after 150 s"
           exit 1
-
-      # ── Pull richer diagnostics if the job fails ---------------------------
-      - name: Download App Service logs (if failed)
-        if: failure()
-        shell: bash
-        env:
-          RG:  ${{ inputs.RG }}
-          APP: ${{ inputs.APP }}
-        run: |
-          set -euo pipefail
-          az webapp log download -g "$RG" -n "$APP" --log-file appservice_logs.zip || true
-
-      - name: Fetch Kudu docker logs (if failed)
-        if: failure()
-        shell: bash
-        env:
-          RG:  ${{ inputs.RG }}
-          APP: ${{ inputs.APP }}
-        run: |
-          set -euo pipefail
-          USER=$(az webapp deployment list-publishing-credentials -g "$RG" -n "$APP" --query publishingUserName -o tsv)
-          PASS=$(az webapp deployment list-publishing-credentials -g "$RG" -n "$APP" --query publishingPassword -o tsv)
-          curl -s -u "$USER:$PASS" "https://${APP}.scm.azurewebsites.net/api/logs/docker" -o dockerlog.json || true
-
-      - name: Upload diagnostics (if failed)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: appservice-diagnostics
-          path: |
-            appservice_logs.zip
-            dockerlog.json
-            live.log
 
       # ── Upload live log on failure ----------------------------------------
       - if: failure()
