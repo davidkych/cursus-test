@@ -46,7 +46,9 @@ function getToken() {
 function clearToken() {
   try {
     localStorage.removeItem(TOKEN_KEY)
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /* ─────────────────────────── authFetch ───────────────────────────────
@@ -149,7 +151,10 @@ export async function login(payload) {
  * {
  *   id, username, email, created, gender, dob, country,
  *   profile_pic_id, profile_pic_type,
- *   // NEW (optional):
+ *   // feature flags (NEW):
+ *   is_admin: boolean,
+ *   is_premium: boolean,
+ *   // (optional) latest login telemetry:
  *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
  * }
  */
@@ -165,6 +170,8 @@ export async function me() {
       country: 'HKG',
       profile_pic_id: 1,
       profile_pic_type: 'default',
+      is_admin: false,
+      is_premium: true,
       // Example shape; real backend may omit or differ in mock
       login_context: {
         last_login_utc: new Date().toISOString(),
@@ -179,5 +186,83 @@ export async function me() {
 
   const res = await authFetch(`${API_BASE}/api/auth/me`, { method: 'GET' })
   if (!res.ok) await handleError(res, 'Failed to fetch profile')
+  return res.json()
+}
+
+/**
+ * Change password (requires Authorization bearer token).
+ * Body: { current_password, new_password }
+ */
+export async function changePassword(payload) {
+  if (MOCK) {
+    // Simulate success
+    return Promise.resolve({ status: 'ok' })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'Password change failed')
+  return res.json()
+}
+
+/**
+ * Change e-mail (requires Authorization bearer token).
+ * Body: { current_password, new_email }
+ */
+export async function changeEmail(payload) {
+  if (MOCK) {
+    // Simulate success; echo back email
+    return Promise.resolve({ status: 'ok', email: payload?.new_email || 'mock@example.com' })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/change-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'E-mail change failed')
+  return res.json()
+}
+
+/**
+ * Redeem a feature code (requires Authorization bearer token).
+ * Input can be a string or { code } object.
+ * Returns:
+ * {
+ *   status: "ok",
+ *   code: string,
+ *   mode: "oneoff"|"reusable"|"single",
+ *   function: "is_admin"|"is_premium",
+ *   user: string,
+ *   applied: { is_admin: boolean, is_premium: boolean }
+ * }
+ */
+export async function redeemCode(input) {
+  const code = typeof input === 'string' ? input : input?.code
+  if (!code || typeof code !== 'string') {
+    throw new Error('Code is required')
+  }
+
+  if (MOCK) {
+    // Simulate success; flip premium for demo purposes
+    return Promise.resolve({
+      status: 'ok',
+      code: code.toUpperCase(),
+      mode: 'reusable',
+      function: 'is_premium',
+      user: 'mock-user',
+      applied: { is_admin: false, is_premium: true },
+    })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/redeem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  })
+  if (!res.ok) await handleError(res, 'Redeem failed')
   return res.json()
 }

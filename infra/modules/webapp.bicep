@@ -85,6 +85,9 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'LOGIN_TELEMETRY',                     value: loginTelemetry }
         { name: 'GEOIP_PROVIDER',                      value: geoipProvider }
         { name: 'AZURE_MAPS_KEY',                      value: azureMapsKey }
+
+        // ⟨NEW⟩ Codes container wiring (for voucher/code system)
+        { name: 'CODES_CONTAINER',                     value: 'codes' }
       ]
     }
   }

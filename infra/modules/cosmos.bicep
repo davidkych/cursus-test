@@ -77,7 +77,7 @@ resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // ---------------------------------------------------------------------------
-// ✨ NEW: Users container (shared RU/s)
+// Users container (shared RU/s)
 // ---------------------------------------------------------------------------
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
@@ -98,6 +98,27 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
       }
     }
     options: {}                  // inherit DB throughput (cheapest)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NEW: Codes container (per-item TTL; code id as partition key)
+// ---------------------------------------------------------------------------
+resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+  parent: cosmosDb
+  name:   'codes'
+  properties: {
+    resource: {
+      id: 'codes'
+      partitionKey: {
+        paths: [ '/id' ]   // the code itself is the document id
+        kind:  'Hash'
+      }
+      // Enable TTL at container level; items can set "ttl" for auto-purge.
+      defaultTtl: -1
+      // Default indexing is fine; keep simple for point reads by /id.
+    }
+    options: {}
   }
 }
 

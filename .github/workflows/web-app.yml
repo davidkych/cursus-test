@@ -100,7 +100,8 @@ jobs:
             "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
             "SCM_LOGSTREAM_TIMEOUT":                  "240",
             "JWT_SECRET":                             "$JWT_SECRET",
-            "USERS_CONTAINER":                        "users"
+            "USERS_CONTAINER":                        "users",
+            "CODES_CONTAINER":                        "codes"
           }
           JSON
 
