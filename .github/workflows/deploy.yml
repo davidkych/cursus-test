@@ -72,7 +72,7 @@ jobs:
     steps:
       - id: set
         run: |
-          echo "PREFIX=${PREFIX}"   >> $GITHUB_OUTPUT
+          echo "PREFIX=${PREFIX}"     >> $GITHUB_OUTPUT
           echo "LOCATION=${LOCATION}" >> $GITHUB_OUTPUT
           echo "PLAN_SKU=${PLAN_SKU}" >> $GITHUB_OUTPUT
           echo "TIMEOUT=${TIMEOUT}"   >> $GITHUB_OUTPUT
@@ -117,7 +117,7 @@ jobs:
       PREFIX:   ${{ needs.constants.outputs.PREFIX }}
       LOCATION: ${{ needs.constants.outputs.LOCATION }}
       PLAN_SKU: ${{ needs.constants.outputs.PLAN_SKU }}
-      TIMEOUT:  ${{ needs.constants.outputs.TIMEOUT }}
+      TIMEOUT:  '${{ needs.constants.outputs.TIMEOUT }}'
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -176,7 +176,7 @@ jobs:
     with:
       RG:         ${{ needs.lookup.outputs.rg }}
       APP:        ${{ needs.lookup.outputs.app }}
-      TIMEOUT:    ${{ needs.constants.outputs.TIMEOUT }}
+      TIMEOUT:    '${{ needs.constants.outputs.TIMEOUT }}'
       COSMOS:     ${{ needs.lookup.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.lookup.outputs.sched_func }}
     secrets:
