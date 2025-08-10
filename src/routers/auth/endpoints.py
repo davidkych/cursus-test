@@ -5,27 +5,11 @@ Aggregator – keeps the original import path unchanged
 while delegating to the dedicated modules.
 """
 from fastapi import APIRouter
-
-# Existing auth feature routers
-from .register        import router as register_router
-from .login           import router as login_router
-from .me              import router as me_router
-from .change_password import router as change_pwd_router
-from .change_email    import router as change_email_router
-
-# NEW: code generation / redemption + simple HTML endpoints
-from .codes_generate         import router as codes_generate_router
-from .codes_redeem           import router as codes_redeem_router
-from .html_codes_endpoints   import router as codes_html_router
+from .register import router as register_router
+from .login    import router as login_router
+from .me       import router as me_router
 
 router = APIRouter()
 router.include_router(register_router)
 router.include_router(login_router)
 router.include_router(me_router)
-router.include_router(change_pwd_router)
-router.include_router(change_email_router)
-
-# Register new routers (under /api/auth/*)
-router.include_router(codes_generate_router)
-router.include_router(codes_redeem_router)
-router.include_router(codes_html_router)

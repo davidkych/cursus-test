@@ -31,7 +31,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
 }
 
 // ---------------------------------------------------------------------------
-/* Single SQL database (400 RU/s – shared) */
+// Single SQL database (400 RU/s – shared)
 // ---------------------------------------------------------------------------
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2021-04-15' = {
   parent: cosmos
@@ -98,56 +98,6 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
       }
     }
     options: {}                  // inherit DB throughput (cheapest)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ✨ NEW: Codes container — stores issued codes
-// PK = /code, id = code (we'll write id == code to enforce one doc per code)
-// ---------------------------------------------------------------------------
-resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
-  parent: cosmosDb
-  name:   'codes'
-  properties: {
-    resource: {
-      id: 'codes'
-      partitionKey: {
-        paths: [ '/code' ]
-        kind:  'Hash'
-      }
-      // Optional uniqueKey on /code (redundant when id==code, but harmless)
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          { paths: [ '/code' ] }
-        ]
-      }
-      // Keep default indexing
-    }
-    options: {}
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ✨ NEW: Code redemptions (audit + per-user limit for reusable codes)
-// PK = /code; uniqueKey on /username ensures at most one redemption per user per code
-// ---------------------------------------------------------------------------
-resource codeRedemptionsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
-  parent: cosmosDb
-  name:   'codeRedemptions'
-  properties: {
-    resource: {
-      id: 'codeRedemptions'
-      partitionKey: {
-        paths: [ '/code' ]
-        kind:  'Hash'
-      }
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          { paths: [ '/username' ] }
-        ]
-      }
-    }
-    options: {}
   }
 }
 
