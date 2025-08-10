@@ -181,3 +181,41 @@ export async function me() {
   if (!res.ok) await handleError(res, 'Failed to fetch profile')
   return res.json()
 }
+
+/**
+ * Change password (requires Authorization bearer token).
+ * Body: { current_password, new_password }
+ */
+export async function changePassword(payload) {
+  if (MOCK) {
+    // Simulate success
+    return Promise.resolve({ status: 'ok' })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'Password change failed')
+  return res.json()
+}
+
+/**
+ * Change e-mail (requires Authorization bearer token).
+ * Body: { current_password, new_email }
+ */
+export async function changeEmail(payload) {
+  if (MOCK) {
+    // Simulate success; echo back email
+    return Promise.resolve({ status: 'ok', email: payload?.new_email || 'mock@example.com' })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/change-email`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'E-mail change failed')
+  return res.json()
+}
