@@ -27,7 +27,7 @@ jobs:
       run_scheduler:     ${{ steps.compute.outputs.run_scheduler }}
       run_staticweb:     ${{ steps.compute.outputs.run_staticweb }}
       run_webapp:        ${{ steps.compute.outputs.run_webapp }}
-      # single source-of-truth prefix (no repo variable, no env)
+      # single source-of-truth prefix (no repo vars, no env)
       prefix:            ${{ steps.compute.outputs.prefix }}
     steps:
       - uses: actions/checkout@v3
@@ -36,6 +36,7 @@ jobs:
         uses: dorny/paths-filter@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          list-files: json   # ⟵ expose <filter>_files and <filter>_count
           filters: |
             github:
               - '.github/**'              # constitutional GitHub
@@ -97,13 +98,41 @@ jobs:
           echo "➡ run:     infra=$run_infra scheduler=$run_scheduler staticweb=$run_staticweb webapp=$run_webapp"
           echo "➡ prefix:  $PREFIX"
 
+      - name: Decision commentary (matched files per filter)
+        shell: bash
+        run: |
+          set -euo pipefail
+          summarize() {
+            local name="$1"; local verdict="$2"; local files_json="$3"; local count="$4"
+            echo "::group::Filter '${name}': verdict=${verdict}, matches=${count}"
+            if [ "${count:-0}" != "0" ] && [ -n "${files_json:-}" ]; then
+              python3 - <<'PY'
+import os, json, sys
+name = os.environ.get('FNAME')
+files = json.loads(os.environ.get('FFILES','[]') or '[]')
+for f in files[:200]:
+    print(f"  - {f}")
+if len(files) > 200:
+    print(f"  … and {len(files)-200} more")
+PY
+            else
+              echo "  (no files matched)"
+            fi
+            echo "::endgroup::"
+          }
+          export FNAME=github  FFILES='${{ steps.filter.outputs.github_files }}';    summarize github    '${{ steps.filter.outputs.github }}'    '${{ steps.filter.outputs.github_files }}'    '${{ steps.filter.outputs.github_count }}'
+          export FNAME=infra   FFILES='${{ steps.filter.outputs.infra_files }}';     summarize infra     '${{ steps.filter.outputs.infra }}'     '${{ steps.filter.outputs.infra_files }}'     '${{ steps.filter.outputs.infra_count }}'
+          export FNAME=scheduler FFILES='${{ steps.filter.outputs.scheduler_files }}'; summarize scheduler '${{ steps.filter.outputs.scheduler }}' '${{ steps.filter.outputs.scheduler_files }}' '${{ steps.filter.outputs.scheduler_count }}'
+          export FNAME=staticweb FFILES='${{ steps.filter.outputs.staticweb_files }}'; summarize staticweb '${{ steps.filter.outputs.staticweb }}' '${{ steps.filter.outputs.staticweb_files }}' '${{ steps.filter.outputs.staticweb_count }}'
+          export FNAME=webapp  FFILES='${{ steps.filter.outputs.webapp_files }}';    summarize webapp    '${{ steps.filter.outputs.webapp }}'    '${{ steps.filter.outputs.webapp_files }}'    '${{ steps.filter.outputs.webapp_count }}'
+
   # ─────────────────────────── infra (conditional) ───────────────────────────
   infra:
     needs: [ changes ]
     if: ${{ needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/infra.yml
     with:
-      PREFIX:   ${{ needs.changes.outputs.prefix }}   # <— from changes job
+      PREFIX:   ${{ needs.changes.outputs.prefix }}
       LOCATION: eastasia
       PLAN_SKU: B1
       TIMEOUT:  1800
@@ -133,33 +162,30 @@ jobs:
 
       - id: resolve
         name: Derive names & discover Cosmos
-        shell: bash
-        run: |
-          set -euo pipefail
-          PREFIX="${{ needs.changes.outputs.prefix }}"
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            PREFIX="${{ needs.changes.outputs.prefix }}"
 
-          RG="${PREFIX}-rg"
+            RG="${PREFIX}-rg"
+            APP="${PREFIX}-app"
+            SCHED_FUNC="${PREFIX}-sched"
+            STATIC_SITE="${PREFIX}-web"
 
-          # Discover existing resources in the RG (first match per type)
-          APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv || true)
-          SCHED_FUNC=$(az functionapp list -g "$RG" --query "[0].name" -o tsv || true)
-          STATIC_SITE=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv || true)
-          COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv || true)
+            COSMOS="$(az cosmosdb account list -g "$RG" --query "[0].name" -o tsv)"
+            if [ -z "$COSMOS" ]; then
+              echo "No Cosmos DB account found in RG $RG" >&2
+              exit 1
+            fi
 
-          if [ -z "$COSMOS" ]; then
-            echo "No Cosmos DB account found in RG $RG" >&2
-            exit 1
-          fi
-
-          {
-            echo "RG=$RG"
-            echo "APP=$APP"
-            echo "SCHED_FUNC=$SCHED_FUNC"
-            echo "STATIC_SITE=$STATIC_SITE"
-            echo "COSMOS=$COSMOS"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Resolved: rg=$RG, app=$APP, sched_func=$SCHED_FUNC, static_site=$STATIC_SITE, cosmos=$COSMOS"
+            {
+              echo "RG=$RG"
+              echo "APP=$APP"
+              echo "SCHED_FUNC=$SCHED_FUNC"
+              echo "STATIC_SITE=$STATIC_SITE"
+              echo "COSMOS=$COSMOS"
+            } >> "$GITHUB_OUTPUT"
 
   # ────────────────────────── web-app (after infra) ──────────────────────────
   web_app_after_infra:
