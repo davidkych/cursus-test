@@ -8,28 +8,37 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents:  read
 
 jobs:
-  # ──────────────────────────── detect ────────────────────────────
-  detect:
-    name: Detect changed territories
+  # ───────────────────────── change detection ─────────────────────────
+  changes:
+    name: Detect changes
     runs-on: ubuntu-latest
     outputs:
-      gh:        ${{ steps.changes.outputs.gh }}
-      infra:     ${{ steps.changes.outputs.infra }}
-      scheduler: ${{ steps.changes.outputs.scheduler }}
-      staticweb: ${{ steps.changes.outputs.staticweb }}
-      webapp:    ${{ steps.changes.outputs.webapp }}
+      # raw area changes
+      changed_github:    ${{ steps.filter.outputs.github }}
+      changed_infra:     ${{ steps.filter.outputs.infra }}
+      changed_scheduler: ${{ steps.filter.outputs.scheduler }}
+      changed_staticweb: ${{ steps.filter.outputs.staticweb }}
+      changed_webapp:    ${{ steps.filter.outputs.webapp }}
+      # computed run flags
+      run_infra:         ${{ steps.compute.outputs.run_infra }}
+      run_scheduler:     ${{ steps.compute.outputs.run_scheduler }}
+      run_staticweb:     ${{ steps.compute.outputs.run_staticweb }}
+      run_webapp:        ${{ steps.compute.outputs.run_webapp }}
+      # single source-of-truth prefix (no repo variable, no env)
+      prefix:            ${{ steps.compute.outputs.prefix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - id: changes
+      - id: filter
         uses: dorny/paths-filter@v3
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           filters: |
-            gh:
-              - '.github/**'
+            github:
+              - '.github/**'              # constitutional GitHub
             infra:
               - 'infra/**'
             scheduler:
@@ -38,111 +47,193 @@ jobs:
               - 'frontend/**'
             webapp:
               - 'src/**'
-              - '!src/scheduler_fapp/**'
+              - '!src/scheduler_fapp/**'  # exclude scheduler from webapp
 
-      - name: Summary
+      - id: compute
+        name: Compute run flags and prefix
+        shell: bash
         run: |
-          echo "gh:        ${{ steps.changes.outputs.gh }}"
-          echo "infra:     ${{ steps.changes.outputs.infra }}"
-          echo "scheduler: ${{ steps.changes.outputs.scheduler }}"
-          echo "staticweb: ${{ steps.changes.outputs.staticweb }}"
-          echo "webapp:    ${{ steps.changes.outputs.webapp }}"
+          set -euo pipefail
 
-  # ─────────────────────── provision_infra ────────────────────────
-  provision_infra:
-    name: Provision infra (when GH or infra changed)
-    needs: detect
-    if: ${{ needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' }}
+          github="${{ steps.filter.outputs.github }}"
+          infra="${{ steps.filter.outputs.infra }}"
+          scheduler="${{ steps.filter.outputs.scheduler }}"
+          staticweb="${{ steps.filter.outputs.staticweb }}"
+          webapp="${{ steps.filter.outputs.webapp }}"
+
+          # ── Single source-of-truth for names (no repo vars, no env) ───────
+          PREFIX="cursus-test1"
+
+          # ── Decide what to run per your rules ─────────────────────────────
+          run_infra="false"
+          if [ "$github" = "true" ] || [ "$infra" = "true" ]; then
+            run_infra="true"
+          fi
+
+          run_scheduler="false"
+          if [ "$github" = "true" ] || [ "$infra" = "true" ] || [ "$scheduler" = "true" ]; then
+            run_scheduler="true"
+          fi
+
+          run_staticweb="false"
+          if [ "$github" = "true" ] || [ "$infra" = "true" ] || [ "$staticweb" = "true" ]; then
+            run_staticweb="true"
+          fi
+
+          run_webapp="false"
+          if [ "$github" = "true" ] || [ "$infra" = "true" ] || [ "$webapp" = "true" ]; then
+            run_webapp="true"
+          fi
+
+          {
+            echo "prefix=$PREFIX"
+            echo "run_infra=$run_infra"
+            echo "run_scheduler=$run_scheduler"
+            echo "run_staticweb=$run_staticweb"
+            echo "run_webapp=$run_webapp"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "➡ changed: github=$github infra=$infra scheduler=$scheduler staticweb=$staticweb webapp=$webapp"
+          echo "➡ run:     infra=$run_infra scheduler=$run_scheduler staticweb=$run_staticweb webapp=$run_webapp"
+          echo "➡ prefix:  $PREFIX"
+
+  # ─────────────────────────── infra (conditional) ───────────────────────────
+  infra:
+    needs: [ changes ]
+    if: ${{ needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/infra.yml
     with:
-      PREFIX:   ${{ vars.PREFIX }}
-      LOCATION: ${{ vars.LOCATION }}
-      PLAN_SKU: ${{ vars.PLAN_SKU }}
-      TIMEOUT:  ${{ vars.TIMEOUT }}
+      PREFIX:   ${{ needs.changes.outputs.prefix }}   # <— from changes job
+      LOCATION: eastasia
+      PLAN_SKU: B1
+      TIMEOUT:  1800
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-  # ─────────────────────── discover_infra ─────────────────────────
-  discover_infra:
-    name: Discover existing infra (when infra unchanged)
-    needs: detect
-    if: ${{ needs.detect.outputs.gh != 'true' && needs.detect.outputs.infra != 'true' }}
+  # ─────────────────────── resolve names if infra skipped ────────────────────
+  resolve:
+    name: Resolve resource names (no-infra)
+    needs: [ changes ]
+    if: ${{ needs.changes.outputs.run_infra != 'true' && (needs.changes.outputs.run_webapp == 'true' || needs.changes.outputs.run_scheduler == 'true' || needs.changes.outputs.run_staticweb == 'true') }}
     runs-on: ubuntu-latest
     outputs:
-      rg:          ${{ steps.out.outputs.rg }}
-      app:         ${{ steps.out.outputs.app }}
-      cosmos:      ${{ steps.out.outputs.cosmos }}
-      sched_func:  ${{ steps.out.outputs.sched_func }}
-      static_site: ${{ steps.out.outputs.static_site }}
+      rg:          ${{ steps.resolve.outputs.RG }}
+      app:         ${{ steps.resolve.outputs.APP }}
+      sched_func:  ${{ steps.resolve.outputs.SCHED_FUNC }}
+      static_site: ${{ steps.resolve.outputs.STATIC_SITE }}
+      cosmos:      ${{ steps.resolve.outputs.COSMOS }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
-      - id: out
-        name: Query Azure for resource names
-        shell: bash
-        run: |
-          set -eo pipefail
-          PREFIX="${{ vars.PREFIX }}"
-          RG="${PREFIX}-rg"
+      - id: resolve
+        name: Derive names & discover Cosmos
+        uses: azure/CLI@v2
+        with:
+          inlineScript: |
+            set -euo pipefail
+            PREFIX="${{ needs.changes.outputs.prefix }}"
 
-          APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv || true)
-          COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv || true)
-          SCHED=$(az functionapp list -g "$RG" --query "[0].name" -o tsv || true)
-          STATIC=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv || true)
+            RG="${PREFIX}-rg"
+            APP="${PREFIX}-app"
+            SCHED_FUNC="${PREFIX}-sched"
+            STATIC_SITE="${PREFIX}-web"
 
-          echo "rg=$RG"            >> "$GITHUB_OUTPUT"
-          echo "app=$APP"          >> "$GITHUB_OUTPUT"
-          echo "cosmos=$COSMOS"    >> "$GITHUB_OUTPUT"
-          echo "sched_func=$SCHED" >> "$GITHUB_OUTPUT"
-          echo "static_site=$STATIC" >> "$GITHUB_OUTPUT"
+            COSMOS="$(az cosmosdb account list -g "$RG" --query "[0].name" -o tsv)"
+            if [ -z "$COSMOS" ]; then
+              echo "No Cosmos DB account found in RG $RG" >&2
+              exit 1
+            fi
 
-          echo "Resolved: rg=$RG, app=$APP, cosmos=$COSMOS, sched_func=$SCHED, static_site=$STATIC"
+            {
+              echo "RG=$RG"
+              echo "APP=$APP"
+              echo "SCHED_FUNC=$SCHED_FUNC"
+              echo "STATIC_SITE=$STATIC_SITE"
+              echo "COSMOS=$COSMOS"
+            } >> "$GITHUB_OUTPUT"
 
-  # ────────────────────────── web-app ─────────────────────────────
-  web_app:
-    name: Deploy Web App
-    needs: [detect, provision_infra, discover_infra]
-    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.webapp == 'true') }}
+  # ────────────────────────── web-app (after infra) ──────────────────────────
+  web_app_after_infra:
+    needs: [ changes, infra ]
+    if: ${{ needs.changes.outputs.run_webapp == 'true' && needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:         ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
-      APP:        ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
-      TIMEOUT:    ${{ vars.TIMEOUT }}
-      COSMOS:     ${{ needs.provision_infra.outputs.cosmos      || needs.discover_infra.outputs.cosmos }}
-      SCHED_FUNC: ${{ needs.provision_infra.outputs.sched_func  || needs.discover_infra.outputs.sched_func }}
+      RG:         ${{ needs.infra.outputs.rg }}
+      APP:        ${{ needs.infra.outputs.app }}
+      TIMEOUT:    1800
+      COSMOS:     ${{ needs.infra.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}
 
-  # ───────────────────────── scheduler ────────────────────────────
-  scheduler:
-    name: Deploy Scheduler (Function App)
-    needs: [detect, provision_infra, discover_infra]
-    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.scheduler == 'true') }}
+  # ─────────────────────────── web-app (direct) ──────────────────────────────
+  web_app_direct:
+    needs: [ changes, resolve ]
+    if: ${{ needs.changes.outputs.run_webapp == 'true' && needs.changes.outputs.run_infra != 'true' }}
+    uses: ./.github/workflows/web-app.yml
+    with:
+      RG:         ${{ needs.resolve.outputs.rg }}
+      APP:        ${{ needs.resolve.outputs.app }}
+      TIMEOUT:    1800
+      COSMOS:     ${{ needs.resolve.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.resolve.outputs.sched_func }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+      JWT_SECRET:        ${{ secrets.JWT_SECRET }}
+
+  # ───────────────────────── scheduler (after infra) ─────────────────────────
+  scheduler_after_infra:
+    needs: [ changes, infra ]
+    if: ${{ needs.changes.outputs.run_scheduler == 'true' && needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/scheduler.yml
     with:
-      RG:         ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
-      APP:        ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
-      SCHED_FUNC: ${{ needs.provision_infra.outputs.sched_func  || needs.discover_infra.outputs.sched_func }}
-      COSMOS:     ${{ needs.provision_infra.outputs.cosmos      || needs.discover_infra.outputs.cosmos }}
+      RG:         ${{ needs.infra.outputs.rg }}
+      APP:        ${{ needs.infra.outputs.app }}
+      SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
+      COSMOS:     ${{ needs.infra.outputs.cosmos }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
-  # ───────────────────────── static-web ───────────────────────────
-  static_web:
-    name: Deploy Static Web (Frontend)
-    needs: [detect, provision_infra, discover_infra]
-    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.staticweb == 'true') }}
+  # ─────────────────────────── scheduler (direct) ────────────────────────────
+  scheduler_direct:
+    needs: [ changes, resolve ]
+    if: ${{ needs.changes.outputs.run_scheduler == 'true' && needs.changes.outputs.run_infra != 'true' }}
+    uses: ./.github/workflows/scheduler.yml
+    with:
+      RG:         ${{ needs.resolve.outputs.rg }}
+      APP:        ${{ needs.resolve.outputs.app }}
+      SCHED_FUNC: ${{ needs.resolve.outputs.sched_func }}
+      COSMOS:     ${{ needs.resolve.outputs.cosmos }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+  # ───────────────────────── static-web (after infra) ────────────────────────
+  static_web_after_infra:
+    needs: [ changes, infra ]
+    if: ${{ needs.changes.outputs.run_staticweb == 'true' && needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/static-web.yml
     with:
-      RG:               ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
-      STATIC_SITE_NAME: ${{ needs.provision_infra.outputs.static_site || needs.discover_infra.outputs.static_site }}
-      APP:              ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
+      RG:               ${{ needs.infra.outputs.rg }}
+      STATIC_SITE_NAME: ${{ needs.infra.outputs.static_site }}
+      APP:              ${{ needs.infra.outputs.app }}
+    secrets:
+      AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+  # ─────────────────────────── static-web (direct) ───────────────────────────
+  static_web_direct:
+    needs: [ changes, resolve ]
+    if: ${{ needs.changes.outputs.run_staticweb == 'true' && needs.changes.outputs.run_infra != 'true' }}
+    uses: ./.github/workflows/static-web.yml
+    with:
+      RG:               ${{ needs.resolve.outputs.rg }}
+      STATIC_SITE_NAME: ${{ needs.resolve.outputs.static_site }}
+      APP:              ${{ needs.resolve.outputs.app }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
