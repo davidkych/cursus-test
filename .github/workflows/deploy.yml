@@ -107,24 +107,24 @@ jobs:
             echo "::group::Filter '${name}': verdict=${verdict}, matches=${count}"
             if [ "${count:-0}" != "0" ] && [ -n "${files_json:-}" ]; then
               python3 - <<'PY'
-import os, json, sys
-name = os.environ.get('FNAME')
-files = json.loads(os.environ.get('FFILES','[]') or '[]')
-for f in files[:200]:
-    print(f"  - {f}")
-if len(files) > 200:
-    print(f"  … and {len(files)-200} more")
-PY
-            else
-              echo "  (no files matched)"
-            fi
-            echo "::endgroup::"
-          }
-          export FNAME=github  FFILES='${{ steps.filter.outputs.github_files }}';    summarize github    '${{ steps.filter.outputs.github }}'    '${{ steps.filter.outputs.github_files }}'    '${{ steps.filter.outputs.github_count }}'
-          export FNAME=infra   FFILES='${{ steps.filter.outputs.infra_files }}';     summarize infra     '${{ steps.filter.outputs.infra }}'     '${{ steps.filter.outputs.infra_files }}'     '${{ steps.filter.outputs.infra_count }}'
-          export FNAME=scheduler FFILES='${{ steps.filter.outputs.scheduler_files }}'; summarize scheduler '${{ steps.filter.outputs.scheduler }}' '${{ steps.filter.outputs.scheduler_files }}' '${{ steps.filter.outputs.scheduler_count }}'
-          export FNAME=staticweb FFILES='${{ steps.filter.outputs.staticweb_files }}'; summarize staticweb '${{ steps.filter.outputs.staticweb }}' '${{ steps.filter.outputs.staticweb_files }}' '${{ steps.filter.outputs.staticweb_count }}'
-          export FNAME=webapp  FFILES='${{ steps.filter.outputs.webapp_files }}';    summarize webapp    '${{ steps.filter.outputs.webapp }}'    '${{ steps.filter.outputs.webapp_files }}'    '${{ steps.filter.outputs.webapp_count }}'
+          import os, json, sys
+          name = os.environ.get('FNAME')
+          files = json.loads(os.environ.get('FFILES','[]') or '[]')
+          for f in files[:200]:
+              print(f"  - {f}")
+          if len(files) > 200:
+              print(f"  … and {len(files)-200} more")
+          PY
+                      else
+                        echo "  (no files matched)"
+                      fi
+                      echo "::endgroup::"
+                    }
+                    export FNAME=github  FFILES='${{ steps.filter.outputs.github_files }}';    summarize github    '${{ steps.filter.outputs.github }}'    '${{ steps.filter.outputs.github_files }}'    '${{ steps.filter.outputs.github_count }}'
+                    export FNAME=infra   FFILES='${{ steps.filter.outputs.infra_files }}';     summarize infra     '${{ steps.filter.outputs.infra }}'     '${{ steps.filter.outputs.infra_files }}'     '${{ steps.filter.outputs.infra_count }}'
+                    export FNAME=scheduler FFILES='${{ steps.filter.outputs.scheduler_files }}'; summarize scheduler '${{ steps.filter.outputs.scheduler }}' '${{ steps.filter.outputs.scheduler_files }}' '${{ steps.filter.outputs.scheduler_count }}'
+                    export FNAME=staticweb FFILES='${{ steps.filter.outputs.staticweb_files }}'; summarize staticweb '${{ steps.filter.outputs.staticweb }}' '${{ steps.filter.outputs.staticweb_files }}' '${{ steps.filter.outputs.staticweb_count }}'
+                    export FNAME=webapp  FFILES='${{ steps.filter.outputs.webapp_files }}';    summarize webapp    '${{ steps.filter.outputs.webapp }}'    '${{ steps.filter.outputs.webapp_files }}'    '${{ steps.filter.outputs.webapp_count }}'
 
   # ─────────────────────────── infra (conditional) ───────────────────────────
   infra:
