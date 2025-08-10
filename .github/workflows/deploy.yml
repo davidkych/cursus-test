@@ -133,30 +133,33 @@ jobs:
 
       - id: resolve
         name: Derive names & discover Cosmos
-        uses: azure/CLI@v2
-        with:
-          inlineScript: |
-            set -euo pipefail
-            PREFIX="${{ needs.changes.outputs.prefix }}"
+        shell: bash
+        run: |
+          set -euo pipefail
+          PREFIX="${{ needs.changes.outputs.prefix }}"
 
-            RG="${PREFIX}-rg"
-            APP="${PREFIX}-app"
-            SCHED_FUNC="${PREFIX}-sched"
-            STATIC_SITE="${PREFIX}-web"
+          RG="${PREFIX}-rg"
 
-            COSMOS="$(az cosmosdb account list -g "$RG" --query "[0].name" -o tsv)"
-            if [ -z "$COSMOS" ]; then
-              echo "No Cosmos DB account found in RG $RG" >&2
-              exit 1
-            fi
+          # Discover existing resources in the RG (first match per type)
+          APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv || true)
+          SCHED_FUNC=$(az functionapp list -g "$RG" --query "[0].name" -o tsv || true)
+          STATIC_SITE=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv || true)
+          COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv || true)
 
-            {
-              echo "RG=$RG"
-              echo "APP=$APP"
-              echo "SCHED_FUNC=$SCHED_FUNC"
-              echo "STATIC_SITE=$STATIC_SITE"
-              echo "COSMOS=$COSMOS"
-            } >> "$GITHUB_OUTPUT"
+          if [ -z "$COSMOS" ]; then
+            echo "No Cosmos DB account found in RG $RG" >&2
+            exit 1
+          fi
+
+          {
+            echo "RG=$RG"
+            echo "APP=$APP"
+            echo "SCHED_FUNC=$SCHED_FUNC"
+            echo "STATIC_SITE=$STATIC_SITE"
+            echo "COSMOS=$COSMOS"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: rg=$RG, app=$APP, sched_func=$SCHED_FUNC, static_site=$STATIC_SITE, cosmos=$COSMOS"
 
   # ────────────────────────── web-app (after infra) ──────────────────────────
   web_app_after_infra:
