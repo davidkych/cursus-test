@@ -31,7 +31,7 @@ jobs:
           set -eo pipefail
           python -m pip install --upgrade pip
 
-          VENV="src/.python_packages/lib/site-packages"          # ← NEW (Azure-expected path)
+          VENV="src/.python_packages/lib/site-packages"          # ← Azure-expected path
 
           for attempt in 1 2 3; do
             echo "📦 pip install attempt $attempt"
@@ -44,7 +44,7 @@ jobs:
             sleep $((attempt*15))
           done
 
-          export PYTHONPATH="$PWD/$VENV${PYTHONPATH:+:$PYTHONPATH}"   # ← NEW
+          export PYTHONPATH="$PWD/$VENV${PYTHONPATH:+:$PYTHONPATH}"
           python -m pip check
           python - <<'PY'
           import importlib, sys
@@ -81,33 +81,29 @@ jobs:
               --resource-group "$RG" --account-name "$COSMOS" \
               --principal-id "$principalId" --role-definition-id "$roleId" --scope "/"
 
-      # ── App settings (no telemetry keys here; Bicep sets them) -------------
-      - name: Configure Web-App settings
+      # ── App settings: set ONLY deltas; leave infra-owned values to Bicep ---
+      - name: Configure Web-App settings (secrets & runtime only)
         shell: bash
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           set -eo pipefail
 
+          # Minimal settings here to avoid extra restarts pre-deploy.
+          # WEBSITE_RUN_FROM_PACKAGE=1 ensures atomic package mount (no rsync temp dir).
           cat > appsettings.json <<JSON
           {
-            "WEBSITE_RUN_FROM_PACKAGE":               "0",
-            "SCM_DO_BUILD_DURING_DEPLOYMENT":         "false",
-            "WEBSITES_PORT":                          "8000",
-            "PYTHONPATH":                             "/home/site/wwwroot/.python_packages/lib/site-packages",
-            "WEBSITES_CONTAINER_START_TIME_LIMIT":    "${{ inputs.TIMEOUT }}",
-            "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
-            "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
-            "SCM_LOGSTREAM_TIMEOUT":                  "240",
-            "JWT_SECRET":                             "$JWT_SECRET",
-            "USERS_CONTAINER":                        "users"
+            "WEBSITE_RUN_FROM_PACKAGE": "1",
+            "PYTHONPATH": "/home/site/wwwroot/.python_packages/lib/site-packages",
+            "JWT_SECRET": "$JWT_SECRET",
+            "USERS_CONTAINER": "users"
           }
           JSON
 
           az webapp config appsettings set \
             -g ${{ inputs.RG }} \
             -n ${{ inputs.APP }} \
-            --settings @"appsettings.json"
+            --settings @appsettings.json
 
           az webapp config set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --always-on true
           az webapp log config -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
@@ -129,7 +125,7 @@ jobs:
           done
           echo "⚠ still not healthy after 3 min – continuing"
 
-      # ── ZIP deploy ---------------------------------------------------------
+      # ── ZIP deploy (Run-From-Package friendly) -----------------------------
       - name: ZIP-deploy FastAPI web-app
         shell: bash
         run: |
@@ -140,7 +136,7 @@ jobs:
           success=false
           DEPLOY_URL="https://${{ inputs.APP }}.scm.azurewebsites.net/api/deployments/latest"
 
-          for attempt in 1 2; do
+          for attempt in 1 2 3; do
             echo "🚀 ZIP-deploy attempt $attempt"
             if az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
                                 --src-path app.zip --type zip --timeout 600; then
