@@ -13,7 +13,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
+
 # ── core modules -------------------------------------------------------------
 from routers.hello.endpoints           import router as hello_router
 from routers.healthz.endpoints         import router as health_router

@@ -5,7 +5,7 @@ It makes sure that the package root (where **utils.py** lives) is on
 ``sys.path`` so that the function entry-point modules can simply use
 ``import utils`` without failing when Azure Functions loads them.
 """
- 
+
 from pathlib import Path
 import sys
 

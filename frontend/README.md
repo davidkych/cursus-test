@@ -74,6 +74,7 @@ Small laptop layout with show/hide aside menu option
 
 Classic layout with aside menus on the left
 
+
 [![Free Vue 3 Tailwind CSS 4 admin dashboard](https://static.justboil.me/templates/one/one-tailwind-vue-widescreen.png)](https://justboil.github.io/admin-one-vue-tailwind/)
 
 ## Demo
