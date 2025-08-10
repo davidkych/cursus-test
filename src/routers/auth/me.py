@@ -41,9 +41,9 @@ class UserMeOut(BaseModel):
     profile_pic_id: Optional[int] = 1
     profile_pic_type: Optional[Literal["default", "custom"]] = "default"
 
-    # ⟨NEW⟩ feature flags applied via code redemption
+    # ⟨NEW⟩ flags granted via code redemption
     is_admin: Optional[bool] = False
-    is_premium: Optional[bool] = False
+    is_premium_member: Optional[bool] = False
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
@@ -107,9 +107,10 @@ def me(request: Request):
         "country":          doc.get("country"),
         "profile_pic_id":   int(doc.get("profile_pic_id", 1)),
         "profile_pic_type": doc.get("profile_pic_type", "default"),
-        # ⟨NEW⟩ flags (default False when absent)
-        "is_admin":         bool(doc.get("is_admin", False)),
-        "is_premium":       bool(doc.get("is_premium", False)),
+
+        # ⟨NEW⟩ flags (default False if absent)
+        "is_admin":          bool(doc.get("is_admin", False)),
+        "is_premium_member": bool(doc.get("is_premium_member", False)),
     }
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)

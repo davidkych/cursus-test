@@ -7,18 +7,6 @@ param location string
 @description('Name of the app (for account naming)')
 param appName string
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Create-once flags / names (NEW for codes container)
-// ─────────────────────────────────────────────────────────────────────────────
-@description('Create the codes container on this deployment. Leave false for existing envs to avoid PK-change errors.')
-param createCodesContainer bool = false
-
-@description('Codes container name (only used if createCodesContainer = true)')
-param codesContainerName string = 'codes'
-
-@description('Partition key path for the codes container (creation time only)')
-param codesPartitionKeyPath string = '/code'
-
 // ---------------------------------------------------------------------------
 // Account name – keep it short & globally unique
 // ---------------------------------------------------------------------------
@@ -43,7 +31,7 @@ resource cosmos 'Microsoft.DocumentDB/databaseAccounts@2021-04-15' = {
 }
 
 // ---------------------------------------------------------------------------
-// Single SQL database (400 RU/s – shared)
+/* Single SQL database (400 RU/s – shared) */
 // ---------------------------------------------------------------------------
 resource cosmosDb 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2021-04-15' = {
   parent: cosmos
@@ -89,7 +77,7 @@ resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // ---------------------------------------------------------------------------
-// Users container (shared RU/s) — unchanged
+// ✨ NEW: Users container (shared RU/s)
 // ---------------------------------------------------------------------------
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
@@ -114,29 +102,48 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
 }
 
 // ---------------------------------------------------------------------------
-// Codes container (NEW) — create-once gate
-// IMPORTANT: Cosmos partition key is immutable after creation.
-//            Keep this conditional to avoid redeploy failures.
+// ✨ NEW: Codes container — stores issued codes
+// PK = /code, id = code (we'll write id == code to enforce one doc per code)
 // ---------------------------------------------------------------------------
-resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = if (createCodesContainer) {
+resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
-  name:   codesContainerName
+  name:   'codes'
   properties: {
     resource: {
-      id: codesContainerName
+      id: 'codes'
       partitionKey: {
-        paths: [ codesPartitionKeyPath ] // e.g., '/code'
+        paths: [ '/code' ]
         kind:  'Hash'
       }
-      // Typical indexes are fine by default; add/adjust as needed
-      indexingPolicy: {
-        automatic: true
-        indexingMode: 'consistent'
-      }
-      // Unique code values (case-sensitive)
+      // Optional uniqueKey on /code (redundant when id==code, but harmless)
       uniqueKeyPolicy: {
         uniqueKeys: [
           { paths: [ '/code' ] }
+        ]
+      }
+      // Keep default indexing
+    }
+    options: {}
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ✨ NEW: Code redemptions (audit + per-user limit for reusable codes)
+// PK = /code; uniqueKey on /username ensures at most one redemption per user per code
+// ---------------------------------------------------------------------------
+resource codeRedemptionsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+  parent: cosmosDb
+  name:   'codeRedemptions'
+  properties: {
+    resource: {
+      id: 'codeRedemptions'
+      partitionKey: {
+        paths: [ '/code' ]
+        kind:  'Hash'
+      }
+      uniqueKeyPolicy: {
+        uniqueKeys: [
+          { paths: [ '/username' ] }
         ]
       }
     }

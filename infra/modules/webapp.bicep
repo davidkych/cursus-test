@@ -86,8 +86,10 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'GEOIP_PROVIDER',                      value: geoipProvider }
         { name: 'AZURE_MAPS_KEY',                      value: azureMapsKey }
 
-        // ⟨NEW⟩ Codes container wiring (for voucher/code system)
+        // ⟨NEW⟩ Code system wiring (containers + function map)
         { name: 'CODES_CONTAINER',                     value: 'codes' }
+        { name: 'REDEMPTIONS_CONTAINER',               value: 'codeRedemptions' }
+        { name: 'CODE_FUNCTION_MAP',                   value: '{"isAdmin":"is_admin","IsPremiumMember":"is_premium_member"}' }
       ]
     }
   }

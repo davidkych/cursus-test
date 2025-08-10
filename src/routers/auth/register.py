@@ -23,7 +23,7 @@ class UserCreate(BaseModel):
     email:             EmailStr
     password:          str                                = Field(..., min_length=8)
 
-    # ⟨NEW (previously added)⟩ extended fields
+    # ⟨NEW⟩ extended fields
     gender:            Literal['male', 'female']
     dob:               datetime.date                      # expects 'YYYY-MM-DD'
     country:           str                                = Field(..., min_length=3, max_length=3)  # ISO-3166-1 alpha-3
@@ -69,17 +69,13 @@ def register(user: UserCreate):
         "password":         _hash_pwd(user.password),
         "created":          datetime.datetime.utcnow().isoformat(),
 
-        # Extended profile fields
+        # ⟨NEW⟩ persist all extended fields
         "gender":           user.gender,                   # 'male' | 'female'
         "dob":              user.dob.isoformat(),          # 'YYYY-MM-DD'
         "country":          country,                       # ISO-3166-1 alpha-3 (e.g. 'USA')
         "profile_pic_id":   user.profile_pic_id,
         "profile_pic_type": user.profile_pic_type,         # 'default' | 'custom'
         "accepted_terms":   bool(user.accepted_terms),
-
-        # ⟨NEW⟩ default feature flags (modified by code redemption later)
-        "is_admin":         False,
-        "is_premium":       False,
     }
 
     try:

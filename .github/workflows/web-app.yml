@@ -101,7 +101,9 @@ jobs:
             "SCM_LOGSTREAM_TIMEOUT":                  "240",
             "JWT_SECRET":                             "$JWT_SECRET",
             "USERS_CONTAINER":                        "users",
-            "CODES_CONTAINER":                        "codes"
+            "CODES_CONTAINER":                        "codes",
+            "REDEMPTIONS_CONTAINER":                  "codeRedemptions",
+            "CODE_FUNCTION_MAP":                      "{\"isAdmin\":\"is_admin\",\"IsPremiumMember\":\"is_premium_member\"}"
           }
           JSON
 
