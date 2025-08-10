@@ -8,124 +8,66 @@ on:
 
 permissions:
   id-token: write
-  contents:  read
-
-# Single source-of-truth for names and constants
-env:
-  PREFIX:   cursus-test1
-  LOCATION: eastasia
-  PLAN_SKU: B1
-  TIMEOUT:  1800
-
-concurrency:
-  group: deploy-${{ github.ref }}
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  # ─────────────────────────── detect ───────────────────────────
+  # ──────────────────────────── detect ────────────────────────────
   detect:
+    name: Detect changed territories
     runs-on: ubuntu-latest
     outputs:
-      constitutional: ${{ steps.filter.outputs.constitutional }}
-      infra:          ${{ steps.filter.outputs.infra }}
-      scheduler:      ${{ steps.filter.outputs.scheduler }}
-      static:         ${{ steps.filter.outputs.static }}
-      webapp:         ${{ steps.filter.outputs.webapp }}
+      gh:        ${{ steps.changes.outputs.gh }}
+      infra:     ${{ steps.changes.outputs.infra }}
+      scheduler: ${{ steps.changes.outputs.scheduler }}
+      staticweb: ${{ steps.changes.outputs.staticweb }}
+      webapp:    ${{ steps.changes.outputs.webapp }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
 
-      - id: filter
+      - id: changes
         uses: dorny/paths-filter@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           filters: |
-            constitutional:
+            gh:
               - '.github/**'
             infra:
               - 'infra/**'
             scheduler:
               - 'src/scheduler_fapp/**'
-            static:
+            staticweb:
               - 'frontend/**'
             webapp:
               - 'src/**'
               - '!src/scheduler_fapp/**'
 
-      - name: Echo decisions
+      - name: Summary
         run: |
-          echo "constitutional=${{ steps.filter.outputs.constitutional }}"
-          echo "infra=${{ steps.filter.outputs.infra }}"
-          echo "scheduler=${{ steps.filter.outputs.scheduler }}"
-          echo "static=${{ steps.filter.outputs.static }}"
-          echo "webapp=${{ steps.filter.outputs.webapp }}"
+          echo "gh:        ${{ steps.changes.outputs.gh }}"
+          echo "infra:     ${{ steps.changes.outputs.infra }}"
+          echo "scheduler: ${{ steps.changes.outputs.scheduler }}"
+          echo "staticweb: ${{ steps.changes.outputs.staticweb }}"
+          echo "webapp:    ${{ steps.changes.outputs.webapp }}"
 
-  # ───────────────────────── constants ──────────────────────────
-  # Expose workflow env values as job outputs to be used in `with:`
-  constants:
-    runs-on: ubuntu-latest
-    outputs:
-      PREFIX:   ${{ steps.set.outputs.PREFIX }}
-      LOCATION: ${{ steps.set.outputs.LOCATION }}
-      PLAN_SKU: ${{ steps.set.outputs.PLAN_SKU }}
-      TIMEOUT:  ${{ steps.set.outputs.TIMEOUT }}
-    steps:
-      - id: set
-        run: |
-          echo "PREFIX=${PREFIX}"     >> $GITHUB_OUTPUT
-          echo "LOCATION=${LOCATION}" >> $GITHUB_OUTPUT
-          echo "PLAN_SKU=${PLAN_SKU}" >> $GITHUB_OUTPUT
-          echo "TIMEOUT=${TIMEOUT}"   >> $GITHUB_OUTPUT
-        env:
-          PREFIX:   ${{ env.PREFIX }}
-          LOCATION: ${{ env.LOCATION }}
-          PLAN_SKU: ${{ env.PLAN_SKU }}
-          TIMEOUT:  ${{ env.TIMEOUT }}
-
-  # ────────────────────────── precheck ──────────────────────────
-  # Ensures first-time bootstrap runs infra even if only app code changed.
-  precheck:
-    needs: [detect, constants]
-    runs-on: ubuntu-latest
-    outputs:
-      bootstrap: ${{ steps.check.outputs.bootstrap }}
-    steps:
-      - uses: azure/login@v1
-        with:
-          auth-type: SERVICE_PRINCIPAL
-          creds:     ${{ secrets.AZURE_CREDENTIALS }}
-
-      - id: check
-        shell: bash
-        env:
-          RG: ${{ needs.constants.outputs.PREFIX }}-rg
-        run: |
-          set -eo pipefail
-          if az group exists -n "$RG" | grep -qi true; then
-            echo "bootstrap=false" >> $GITHUB_OUTPUT
-          else
-            echo "bootstrap=true" >> $GITHUB_OUTPUT
-            echo "ℹ️ Resource group $RG not found – infra will run to bootstrap."
-          fi
-
-  # ─────────────────────────── infra ────────────────────────────
-  infra:
-    needs: [detect, constants, precheck]
-    if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
+  # ─────────────────────── provision_infra ────────────────────────
+  provision_infra:
+    name: Provision infra (when GH or infra changed)
+    needs: detect
+    if: ${{ needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' }}
     uses: ./.github/workflows/infra.yml
     with:
-      PREFIX:   ${{ needs.constants.outputs.PREFIX }}
-      LOCATION: ${{ needs.constants.outputs.LOCATION }}
-      PLAN_SKU: ${{ needs.constants.outputs.PLAN_SKU }}
-      TIMEOUT:  '${{ needs.constants.outputs.TIMEOUT }}'
+      PREFIX:   ${{ vars.PREFIX }}
+      LOCATION: ${{ vars.LOCATION }}
+      PLAN_SKU: ${{ vars.PLAN_SKU }}
+      TIMEOUT:  ${{ vars.TIMEOUT }}
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-  # ─────────────────────────── lookup ───────────────────────────
-  # Pulls current outputs from the latest succeeded group deployment.
-  lookup:
-    needs: [detect, constants, infra]
+  # ─────────────────────── discover_infra ─────────────────────────
+  discover_infra:
+    name: Discover existing infra (when infra unchanged)
+    needs: detect
+    if: ${{ needs.detect.outputs.gh != 'true' && needs.detect.outputs.infra != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       rg:          ${{ steps.out.outputs.rg }}
@@ -134,76 +76,73 @@ jobs:
       sched_func:  ${{ steps.out.outputs.sched_func }}
       static_site: ${{ steps.out.outputs.static_site }}
     steps:
+      - uses: actions/checkout@v4
+
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
       - id: out
+        name: Query Azure for resource names
         shell: bash
-        env:
-          RG: ${{ needs.constants.outputs.PREFIX }}-rg
         run: |
           set -eo pipefail
-          DEPLOY=$(az deployment group list -g "$RG" \
-                     --query "[?properties.provisioningState=='Succeeded'] | [-1].name" -o tsv || true)
+          PREFIX="${{ vars.PREFIX }}"
+          RG="${PREFIX}-rg"
 
-          if [[ -z "$DEPLOY" ]]; then
-            echo "❌ No successful deployments found in RG $RG. Did infra ever run?"
-            exit 1
-          fi
+          APP=$(az webapp list -g "$RG" --query "[0].name" -o tsv || true)
+          COSMOS=$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv || true)
+          SCHED=$(az functionapp list -g "$RG" --query "[0].name" -o tsv || true)
+          STATIC=$(az staticwebapp list -g "$RG" --query "[0].name" -o tsv || true)
 
-          get_out () { az deployment group show -g "$RG" -n "$DEPLOY" --query "properties.outputs.$1.value" -o tsv; }
+          echo "rg=$RG"            >> "$GITHUB_OUTPUT"
+          echo "app=$APP"          >> "$GITHUB_OUTPUT"
+          echo "cosmos=$COSMOS"    >> "$GITHUB_OUTPUT"
+          echo "sched_func=$SCHED" >> "$GITHUB_OUTPUT"
+          echo "static_site=$STATIC" >> "$GITHUB_OUTPUT"
 
-          COSMOS=$(get_out cosmosAccountName)
-          SCHED=$(get_out schedulerFunctionName)
-          STATIC=$(get_out staticSiteName)
-          APP=$(get_out webAppName)
+          echo "Resolved: rg=$RG, app=$APP, cosmos=$COSMOS, sched_func=$SCHED, static_site=$STATIC"
 
-          echo "::add-mask::$COSMOS"; echo "::add-mask::$SCHED"; echo "::add-mask::$STATIC"; echo "::add-mask::$APP"
-
-          echo "rg=$RG"              >> $GITHUB_OUTPUT
-          echo "cosmos=$COSMOS"      >> $GITHUB_OUTPUT
-          echo "sched_func=$SCHED"   >> $GITHUB_OUTPUT
-          echo "static_site=$STATIC" >> $GITHUB_OUTPUT
-          echo "app=$APP"            >> $GITHUB_OUTPUT
-
-  # ────────────────────────── web-app ───────────────────────────
+  # ────────────────────────── web-app ─────────────────────────────
   web_app:
-    needs: [detect, constants, precheck, infra, lookup]
-    if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.webapp == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
+    name: Deploy Web App
+    needs: [detect, provision_infra, discover_infra]
+    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.webapp == 'true') }}
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:         ${{ needs.lookup.outputs.rg }}
-      APP:        ${{ needs.lookup.outputs.app }}
-      TIMEOUT:    '${{ needs.constants.outputs.TIMEOUT }}'
-      COSMOS:     ${{ needs.lookup.outputs.cosmos }}
-      SCHED_FUNC: ${{ needs.lookup.outputs.sched_func }}
+      RG:         ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
+      APP:        ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
+      TIMEOUT:    ${{ vars.TIMEOUT }}
+      COSMOS:     ${{ needs.provision_infra.outputs.cosmos      || needs.discover_infra.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.provision_infra.outputs.sched_func  || needs.discover_infra.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}
 
-  # ───────────────────────── scheduler ──────────────────────────
+  # ───────────────────────── scheduler ────────────────────────────
   scheduler:
-    needs: [detect, constants, precheck, infra, lookup]
-    if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.scheduler == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
+    name: Deploy Scheduler (Function App)
+    needs: [detect, provision_infra, discover_infra]
+    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.scheduler == 'true') }}
     uses: ./.github/workflows/scheduler.yml
     with:
-      RG:         ${{ needs.lookup.outputs.rg }}
-      APP:        ${{ needs.lookup.outputs.app }}
-      SCHED_FUNC: ${{ needs.lookup.outputs.sched_func }}
-      COSMOS:     ${{ needs.lookup.outputs.cosmos }}
+      RG:         ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
+      APP:        ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
+      SCHED_FUNC: ${{ needs.provision_infra.outputs.sched_func  || needs.discover_infra.outputs.sched_func }}
+      COSMOS:     ${{ needs.provision_infra.outputs.cosmos      || needs.discover_infra.outputs.cosmos }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
 
-  # ──────────────────────── static-web ─────────────────────────
+  # ───────────────────────── static-web ───────────────────────────
   static_web:
-    needs: [detect, constants, precheck, infra, lookup]
-    if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.static == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
+    name: Deploy Static Web (Frontend)
+    needs: [detect, provision_infra, discover_infra]
+    if: ${{ always() && (needs.detect.outputs.gh == 'true' || needs.detect.outputs.infra == 'true' || needs.detect.outputs.staticweb == 'true') }}
     uses: ./.github/workflows/static-web.yml
     with:
-      RG:               ${{ needs.lookup.outputs.rg }}
-      STATIC_SITE_NAME: ${{ needs.lookup.outputs.static_site }}
-      APP:              ${{ needs.lookup.outputs.app }}
+      RG:               ${{ needs.provision_infra.outputs.rg          || needs.discover_infra.outputs.rg }}
+      STATIC_SITE_NAME: ${{ needs.provision_infra.outputs.static_site || needs.discover_infra.outputs.static_site }}
+      APP:              ${{ needs.provision_infra.outputs.app         || needs.discover_infra.outputs.app }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
