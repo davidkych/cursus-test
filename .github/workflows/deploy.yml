@@ -60,10 +60,32 @@ jobs:
           echo "static=${{ steps.filter.outputs.static }}"
           echo "webapp=${{ steps.filter.outputs.webapp }}"
 
+  # ───────────────────────── constants ──────────────────────────
+  # Expose workflow env values as job outputs to be used in `with:`
+  constants:
+    runs-on: ubuntu-latest
+    outputs:
+      PREFIX:   ${{ steps.set.outputs.PREFIX }}
+      LOCATION: ${{ steps.set.outputs.LOCATION }}
+      PLAN_SKU: ${{ steps.set.outputs.PLAN_SKU }}
+      TIMEOUT:  ${{ steps.set.outputs.TIMEOUT }}
+    steps:
+      - id: set
+        run: |
+          echo "PREFIX=${PREFIX}"   >> $GITHUB_OUTPUT
+          echo "LOCATION=${LOCATION}" >> $GITHUB_OUTPUT
+          echo "PLAN_SKU=${PLAN_SKU}" >> $GITHUB_OUTPUT
+          echo "TIMEOUT=${TIMEOUT}"   >> $GITHUB_OUTPUT
+        env:
+          PREFIX:   ${{ env.PREFIX }}
+          LOCATION: ${{ env.LOCATION }}
+          PLAN_SKU: ${{ env.PLAN_SKU }}
+          TIMEOUT:  ${{ env.TIMEOUT }}
+
   # ────────────────────────── precheck ──────────────────────────
   # Ensures first-time bootstrap runs infra even if only app code changed.
   precheck:
-    needs: detect
+    needs: [detect, constants]
     runs-on: ubuntu-latest
     outputs:
       bootstrap: ${{ steps.check.outputs.bootstrap }}
@@ -76,7 +98,7 @@ jobs:
       - id: check
         shell: bash
         env:
-          RG: ${{ env.PREFIX }}-rg
+          RG: ${{ needs.constants.outputs.PREFIX }}-rg
         run: |
           set -eo pipefail
           if az group exists -n "$RG" | grep -qi true; then
@@ -88,14 +110,14 @@ jobs:
 
   # ─────────────────────────── infra ────────────────────────────
   infra:
-    needs: [detect, precheck]
+    needs: [detect, constants, precheck]
     if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
     uses: ./.github/workflows/infra.yml
     with:
-      PREFIX:   ${{ env.PREFIX }}
-      LOCATION: ${{ env.LOCATION }}
-      PLAN_SKU: ${{ env.PLAN_SKU }}
-      TIMEOUT:  ${{ env.TIMEOUT }}
+      PREFIX:   ${{ needs.constants.outputs.PREFIX }}
+      LOCATION: ${{ needs.constants.outputs.LOCATION }}
+      PLAN_SKU: ${{ needs.constants.outputs.PLAN_SKU }}
+      TIMEOUT:  ${{ needs.constants.outputs.TIMEOUT }}
     secrets:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -103,7 +125,7 @@ jobs:
   # ─────────────────────────── lookup ───────────────────────────
   # Pulls current outputs from the latest succeeded group deployment.
   lookup:
-    needs: [detect, infra]
+    needs: [detect, constants, infra]
     runs-on: ubuntu-latest
     outputs:
       rg:          ${{ steps.out.outputs.rg }}
@@ -120,7 +142,7 @@ jobs:
       - id: out
         shell: bash
         env:
-          RG: ${{ env.PREFIX }}-rg
+          RG: ${{ needs.constants.outputs.PREFIX }}-rg
         run: |
           set -eo pipefail
           DEPLOY=$(az deployment group list -g "$RG" \
@@ -140,21 +162,21 @@ jobs:
 
           echo "::add-mask::$COSMOS"; echo "::add-mask::$SCHED"; echo "::add-mask::$STATIC"; echo "::add-mask::$APP"
 
-          echo "rg=$RG"             >> $GITHUB_OUTPUT
-          echo "cosmos=$COSMOS"     >> $GITHUB_OUTPUT
-          echo "sched_func=$SCHED"  >> $GITHUB_OUTPUT
-          echo "static_site=$STATIC">> $GITHUB_OUTPUT
-          echo "app=$APP"           >> $GITHUB_OUTPUT
+          echo "rg=$RG"              >> $GITHUB_OUTPUT
+          echo "cosmos=$COSMOS"      >> $GITHUB_OUTPUT
+          echo "sched_func=$SCHED"   >> $GITHUB_OUTPUT
+          echo "static_site=$STATIC" >> $GITHUB_OUTPUT
+          echo "app=$APP"            >> $GITHUB_OUTPUT
 
   # ────────────────────────── web-app ───────────────────────────
   web_app:
-    needs: [detect, precheck, infra, lookup]
+    needs: [detect, constants, precheck, infra, lookup]
     if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.webapp == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
     uses: ./.github/workflows/web-app.yml
     with:
       RG:         ${{ needs.lookup.outputs.rg }}
       APP:        ${{ needs.lookup.outputs.app }}
-      TIMEOUT:    ${{ env.TIMEOUT }}
+      TIMEOUT:    ${{ needs.constants.outputs.TIMEOUT }}
       COSMOS:     ${{ needs.lookup.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.lookup.outputs.sched_func }}
     secrets:
@@ -163,7 +185,7 @@ jobs:
 
   # ───────────────────────── scheduler ──────────────────────────
   scheduler:
-    needs: [detect, precheck, infra, lookup]
+    needs: [detect, constants, precheck, infra, lookup]
     if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.scheduler == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
     uses: ./.github/workflows/scheduler.yml
     with:
@@ -176,7 +198,7 @@ jobs:
 
   # ──────────────────────── static-web ─────────────────────────
   static_web:
-    needs: [detect, precheck, infra, lookup]
+    needs: [detect, constants, precheck, infra, lookup]
     if: needs.detect.outputs.constitutional == 'true' || needs.detect.outputs.static == 'true' || needs.detect.outputs.infra == 'true' || needs.precheck.outputs.bootstrap == 'true'
     uses: ./.github/workflows/static-web.yml
     with:
