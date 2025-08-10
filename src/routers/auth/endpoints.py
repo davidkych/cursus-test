@@ -14,7 +14,7 @@ from .change_email     import router as change_email_router
 
 # ⟨NEW⟩ code generator (JSON API), HTML UI, and redemption endpoints
 from .codegen          import router as codegen_router
-from .html_codegen     import router as html_codegen_router
+#from .html_codegen     import router as html_codegen_router
 from .redeem           import router as redeem_router
 
 router = APIRouter()
@@ -28,5 +28,5 @@ router.include_router(change_email_router)
 
 # ⟨NEW⟩ code system routes
 router.include_router(codegen_router)
-router.include_router(html_codegen_router)
+#router.include_router(html_codegen_router)
 router.include_router(redeem_router)
