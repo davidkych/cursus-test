@@ -49,6 +49,10 @@ param loginTelemetry string = '1'
 ])
 param geoipProvider string = 'azmaps'
 
+// ⟨NEW⟩ Codes container name (configurable; defaults to "codes")
+@description('Cosmos container name used for redeemable codes')
+param codesContainerName string = 'codes'
+
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
@@ -76,6 +80,9 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
+
+        // ⟨NEW⟩ Codes container wiring
+        { name: 'CODES_CONTAINER',                     value: codesContainerName }
 
         // Scheduler wiring
         { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }

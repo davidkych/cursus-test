@@ -25,7 +25,12 @@ import UserCard from '@/components/UserCard.vue'
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
 
-import { changePassword as apiChangePassword, changeEmail as apiChangeEmail, me as apiMe } from '@/services/auth.js'
+import {
+  changePassword as apiChangePassword,
+  changeEmail as apiChangeEmail,
+  me as apiMe,
+  redeemCode as apiRedeem,           // ⟨NEW⟩
+} from '@/services/auth.js'
 
 const mainStore = useMainStore()
 
@@ -81,6 +86,14 @@ const emError = ref('')
 const emSuccess = ref('')
 const emLoading = ref(false)
 
+/* ⟨NEW⟩ Redeem Code state */
+const rdForm = reactive({
+  code: '',
+})
+const rdError = ref('')
+const rdSuccess = ref('')
+const rdLoading = ref(false)
+
 /* Helpers */
 function resetPwMessages() {
   pwError.value = ''
@@ -89,6 +102,10 @@ function resetPwMessages() {
 function resetEmMessages() {
   emError.value = ''
   emSuccess.value = ''
+}
+function resetRdMessages() {
+  rdError.value = ''
+  rdSuccess.value = ''
 }
 
 /* Submit handlers */
@@ -142,7 +159,7 @@ async function submitChangeEmail() {
 
   emLoading.value = true
   try {
-    const res = await apiChangeEmail({
+    await apiChangeEmail({
       current_password: emForm.current,
       new_email: emForm.email,
     })
@@ -160,6 +177,32 @@ async function submitChangeEmail() {
     emError.value = err?.message || 'E-mail change failed'
   } finally {
     emLoading.value = false
+  }
+}
+
+/* ⟨NEW⟩ Redeem code submit */
+async function submitRedeem() {
+  resetRdMessages()
+  const code = (rdForm.code || '').trim()
+  if (!code) {
+    rdError.value = 'Please enter a code to redeem'
+    return
+  }
+
+  rdLoading.value = true
+  try {
+    await apiRedeem({ code })
+    rdSuccess.value = 'Code redeemed successfully'
+    // Refresh profile to reflect updated grants (isAdmin / isPremiumMember)
+    try {
+      const profile = await apiMe()
+      auth.setUser(profile)
+    } catch (_) { /* ignore */ }
+    rdForm.code = ''
+  } catch (err) {
+    rdError.value = err?.message || 'Code redemption failed'
+  } finally {
+    rdLoading.value = false
   }
 }
 
@@ -189,7 +232,7 @@ function noopAvatarSubmit(evt) {
 
       <!-- Reworked layout: telemetry panel moved into the LEFT column above Avatar -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- LEFT COLUMN: Telemetry panel → Avatar -->
+        <!-- LEFT COLUMN: Telemetry panel → Avatar → ⟨NEW⟩ Redeem Code -->
         <div class="space-y-6">
           <!-- Telemetry panel (moved here) -->
           <CardBox v-if="lc">
@@ -213,6 +256,44 @@ function noopAvatarSubmit(evt) {
                 <BaseButton color="info" label="Submit" @click="noopAvatarSubmit" />
               </div>
             </FormField>
+          </CardBox>
+
+          <!-- ⟨NEW⟩ Redeem Code (placed after avatar section) -->
+          <CardBox is-form @submit.prevent="submitRedeem">
+            <!-- messages -->
+            <template v-if="rdError">
+              <div class="mb-4 flex items-center text-sm text-red-600">
+                <BaseButton :icon="mdiAlertCircle" color="danger" rounded-full small class="mr-2 pointer-events-none" />
+                <span class="break-words">{{ rdError }}</span>
+              </div>
+            </template>
+            <template v-if="rdSuccess">
+              <div class="mb-4 flex items-center text-sm text-emerald-600">
+                <BaseButton :icon="mdiCheckCircle" color="success" rounded-full small class="mr-2 pointer-events-none" />
+                <span class="break-words">{{ rdSuccess }}</span>
+              </div>
+            </template>
+
+            <FormField label="Redeem code" help="Enter a code to unlock features">
+              <FormControl
+                v-model="rdForm.code"
+                :icon="mdiAsterisk"
+                name="redeem_code"
+                autocomplete="one-time-code"
+                placeholder="e.g. VIP-2025-ABC"
+              />
+            </FormField>
+
+            <template #footer>
+              <BaseButtons>
+                <BaseButton
+                  type="submit"
+                  color="info"
+                  :label="rdLoading ? 'Redeeming…' : 'Redeem'"
+                  :disabled="rdLoading"
+                />
+              </BaseButtons>
+            </template>
           </CardBox>
         </div>
 

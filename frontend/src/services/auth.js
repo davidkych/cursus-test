@@ -150,7 +150,9 @@ export async function login(payload) {
  *   id, username, email, created, gender, dob, country,
  *   profile_pic_id, profile_pic_type,
  *   // NEW (optional):
- *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
+ *   login_context: { last_login_utc, ip, ua, locale, timezone, geo },
+ *   // NEW grant flags:
+ *   isAdmin, isPremiumMember
  * }
  */
 export async function me() {
@@ -165,6 +167,8 @@ export async function me() {
       country: 'HKG',
       profile_pic_id: 1,
       profile_pic_type: 'default',
+      isAdmin: false,
+      isPremiumMember: false,
       // Example shape; real backend may omit or differ in mock
       login_context: {
         last_login_utc: new Date().toISOString(),
@@ -217,5 +221,26 @@ export async function changeEmail(payload) {
     body: JSON.stringify(payload),
   })
   if (!res.ok) await handleError(res, 'E-mail change failed')
+  return res.json()
+}
+
+/**
+ * NEW: Redeem a grant code for the current user (requires Authorization).
+ * Body: { code: string }
+ * On success, backend applies grants (e.g., isAdmin / isPremiumMember).
+ * Caller should refresh the profile (me()) to reflect updated flags.
+ */
+export async function redeemCode(payload) {
+  if (MOCK) {
+    // Simulate success
+    return Promise.resolve({ status: 'ok', code: payload?.code || '' })
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/codes/redeem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) await handleError(res, 'Code redemption failed')
   return res.json()
 }
