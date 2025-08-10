@@ -27,7 +27,7 @@
 * [Premium version](https://justboil.me/tailwind-admin-templates/vue-dashboard/) available
 
 ## Table of Contents
-
+ 
 * [React TypeScript version](#looking-for-react-typescript-version)
 * [Responsive layout](#responsive-layout)
   * [Mobile & tablet](#mobile--tablet)
