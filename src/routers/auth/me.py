@@ -41,10 +41,6 @@ class UserMeOut(BaseModel):
     profile_pic_id: Optional[int] = 1
     profile_pic_type: Optional[Literal["default", "custom"]] = "default"
 
-    # ⟨NEW⟩ canonical grant flags (applied via code redemption; default False)
-    isAdmin: Optional[bool] = False
-    isPremiumMember: Optional[bool] = False
-
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
 
@@ -86,7 +82,6 @@ def me(request: Request):
     Current-user profile endpoint.
     Requires: Authorization: Bearer <JWT>  (HS256 signed with JWT_SECRET).
     Returns extended 'login_context' (latest snapshot) when available.
-    Also surfaces grant flags (isAdmin, isPremiumMember).
     """
     token = _extract_bearer_token(request)
     username = _decode_jwt(token)
@@ -108,10 +103,6 @@ def me(request: Request):
         "country":          doc.get("country"),
         "profile_pic_id":   int(doc.get("profile_pic_id", 1)),
         "profile_pic_type": doc.get("profile_pic_type", "default"),
-
-        # ⟨NEW⟩ grant flags (default False if absent)
-        "isAdmin":          bool(doc.get("isAdmin", False)),
-        "isPremiumMember":  bool(doc.get("isPremiumMember", False)),
     }
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)

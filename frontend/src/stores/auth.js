@@ -82,9 +82,6 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
-      // ⟨NEW⟩ grants toggled by code redemption
-      isAdmin?: boolean
-      isPremiumMember?: boolean
       // ⟨NEW⟩ Latest login telemetry snapshot (optional; shape mirrors backend)
       login_context?: {
         last_login_utc?: string
@@ -112,10 +109,6 @@ export const useAuth = defineStore('auth', () => {
   const avatarUrl       = computed(() =>
     resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
   )
-
-  // ⟨NEW⟩ grant helpers
-  const isAdmin = computed(() => !!user.value?.isAdmin)
-  const isPremiumMember = computed(() => !!user.value?.isPremiumMember)
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
   const lastLoginAt = computed(() => {
@@ -163,9 +156,6 @@ export const useAuth = defineStore('auth', () => {
         country: 'HKG',
         profile_pic_id: 1,
         profile_pic_type: 'default',
-        // ⟨NEW⟩ default grants
-        isAdmin: false,
-        isPremiumMember: false,
         // Demo telemetry (optional)
         login_context: {
           last_login_utc: new Date().toISOString(),
@@ -217,9 +207,6 @@ export const useAuth = defineStore('auth', () => {
         created: new Date().toISOString(),
         profile_pic_id: 1,
         profile_pic_type: 'default',
-        // ⟨NEW⟩ default grants
-        isAdmin: false,
-        isPremiumMember: false,
         login_context: {
           last_login_utc: new Date().toISOString(),
           ip: '203.0.113.42',
@@ -276,9 +263,6 @@ export const useAuth = defineStore('auth', () => {
     avatarUrl,
     lastLoginAt,
     lastLoginSummary,
-    // ⟨NEW⟩ grant getters
-    isAdmin,
-    isPremiumMember,
     // actions
     init,
     login,

@@ -76,10 +76,6 @@ def register(user: UserCreate):
         "profile_pic_id":   user.profile_pic_id,
         "profile_pic_type": user.profile_pic_type,         # 'default' | 'custom'
         "accepted_terms":   bool(user.accepted_terms),
-
-        # ⟨NEW⟩ canonical grant flags defaulted OFF; toggled by code redemption later
-        "isAdmin":          False,
-        "isPremiumMember":  False,
     }
 
     try:

@@ -77,7 +77,7 @@ resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // ---------------------------------------------------------------------------
-// ✨ Users container (shared RU/s)
+// ✨ NEW: Users container (shared RU/s)
 // ---------------------------------------------------------------------------
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
@@ -98,42 +98,6 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
       }
     }
     options: {}                  // inherit DB throughput (cheapest)
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ✨ NEW: Codes container for generator/redeemer (shared RU/s)
-//  - PK: /code  (fast point-reads by code)
-//  - Unique on /code to prevent collisions
-// ---------------------------------------------------------------------------
-resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
-  parent: cosmosDb
-  name:   'codes'
-  properties: {
-    resource: {
-      id: 'codes'
-      partitionKey: {
-        paths: [ '/code' ]
-        kind:  'Hash'
-      }
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          { paths: [ '/code' ] }
-        ]
-      }
-      // keep default indexing; this container is tiny docs, simple queries
-      indexingPolicy: {
-        automatic: true
-        indexingMode: 'consistent'
-        includedPaths: [
-          { path: '/*' }
-        ]
-        excludedPaths: [
-          { path: '/"_etag"/?' }
-        ]
-      }
-    }
-    options: {}                  // inherit DB throughput (shared with DB)
   }
 }
 
