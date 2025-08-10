@@ -57,6 +57,36 @@ jobs:
                   sys.exit(1)
           PY
 
+      # ── NEW: Fail-fast checks BEFORE deploying ─────────────────────────────
+      - name: Syntax check (compileall)     # ← NEW
+        shell: bash
+        run: python -m compileall -q src
+
+      - name: Preflight smoke test (import + /healthz)    # ← NEW
+        shell: bash
+        env:
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        run: |
+          set -eo pipefail
+          # Match Azure’s module layout so imports behave the same
+          export PYTHONPATH="$PWD/src/.python_packages/lib/site-packages:$PWD/src"
+          python - <<'PY'
+          import os, sys, traceback
+          os.environ.setdefault("WEBSITES_PORT","8000")
+          os.environ.setdefault("JWT_SECRET", os.getenv("JWT_SECRET","test"))
+          try:
+              import main
+              from fastapi.testclient import TestClient
+              client = TestClient(main.app)
+              r = client.get("/healthz")
+              assert r.status_code == 200, f"/healthz returned {r.status_code}: {r.text}"
+              print("✅ Preflight passed: /healthz OK")
+          except Exception:
+              print("💥 Preflight failed with exception:\n")
+              traceback.print_exc()       # ← file + line number
+              sys.exit(1)
+          PY
+
       - uses: azure/login@v1
         with:
           auth-type: SERVICE_PRINCIPAL
@@ -96,14 +126,12 @@ jobs:
             "WEBSITES_PORT":                          "8000",
             "PYTHONPATH":                             "/home/site/wwwroot/.python_packages/lib/site-packages",
             "WEBSITES_CONTAINER_START_TIME_LIMIT":    "${{ inputs.TIMEOUT }}",
-            "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",
+            "WEBSITES_STARTUP_COMMAND":               "gunicorn --log-level info --preload --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app",  // ← NEW: --preload
             "WEBSITES_LOG_MESSAGE_LEVEL":             "Verbose",
             "SCM_LOGSTREAM_TIMEOUT":                  "240",
+            "PYTHONUNBUFFERED":                       "1",   // ← NEW: unbuffered stdout/stderr
             "JWT_SECRET":                             "$JWT_SECRET",
-            "USERS_CONTAINER":                        "users",
-            "CODES_CONTAINER":                        "codes",
-            "REDEMPTIONS_CONTAINER":                  "codeRedemptions",
-            "CODE_FUNCTION_MAP":                      "{\"isAdmin\":\"is_admin\",\"IsPremiumMember\":\"is_premium_member\"}"
+            "USERS_CONTAINER":                        "users"
           }
           JSON
 
@@ -117,6 +145,9 @@ jobs:
             --application-logging filesystem \
             --detailed-error-messages true \
             --failed-request-tracing true
+
+          # ← NEW: Explicit health check path gives clearer platform signals
+          az webapp config set -g ${{ inputs.RG }} -n ${{ inputs.APP }} --health-check-path "/healthz"
 
       # ── Wait for restart after settings change -----------------------------
       - name: Wait for web-app to finish restarting
@@ -184,6 +215,39 @@ jobs:
           done
           echo "💥 health check failed after 150 s"
           exit 1
+
+      # ── NEW: Pull richer diagnostics if the job fails ----------------------
+      - name: Download App Service logs (if failed)     # ← NEW
+        if: failure()
+        shell: bash
+        env:
+          RG:  ${{ inputs.RG }}
+          APP: ${{ inputs.APP }}
+        run: |
+          set -euo pipefail
+          az webapp log download -g "$RG" -n "$APP" --log-file appservice_logs.zip || true
+
+      - name: Fetch Kudu docker logs (if failed)        # ← NEW
+        if: failure()
+        shell: bash
+        env:
+          RG:  ${{ inputs.RG }}
+          APP: ${{ inputs.APP }}
+        run: |
+          set -euo pipefail
+          USER=$(az webapp deployment list-publishing-credentials -g "$RG" -n "$APP" --query publishingUserName -o tsv)
+          PASS=$(az webapp deployment list-publishing-credentials -g "$RG" -n "$APP" --query publishingPassword -o tsv)
+          curl -s -u "$USER:$PASS" "https://${APP}.scm.azurewebsites.net/api/logs/docker" -o dockerlog.json || true
+
+      - name: Upload diagnostics (if failed)            # ← NEW
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: appservice-diagnostics
+          path: |
+            appservice_logs.zip
+            dockerlog.json
+            live.log
 
       # ── Upload live log on failure ----------------------------------------
       - if: failure()
