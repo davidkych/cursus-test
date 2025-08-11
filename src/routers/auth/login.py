@@ -6,6 +6,9 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, jwt
 
+# ⟨NEW⟩ shared defaults for user flags (opportunistic backfill)
+from .common import apply_default_user_flags
+
 # ───────────────────────── Cosmos setup ──────────────────────────
 _cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
 _database_name   = os.getenv("COSMOS_DATABASE")
@@ -89,23 +92,39 @@ def login(creds: LoginIn, request: Request):
 
     db_user = _find_user(identifier)
     if not db_user:
-        # Failed login: DO NOT touch any stored telemetry
+        # Failed login: DO NOT touch any stored telemetry or flags
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
 
     if not _verify_pwd(creds.password, db_user["password"]):
-        # Failed login: DO NOT touch any stored telemetry
+        # Failed login: DO NOT touch any stored telemetry or flags
         raise HTTPException(status_code=401, detail="Invalid username/email or password")
 
-    # ── Successful login only: collect & persist latest telemetry snapshot ──
+    # ── Successful login only ────────────────────────────────────────────────
+    # Opportunistic flag backfill: ensure flags exist in memory for this user
+    missing_flags = ("is_admin" not in db_user) or ("is_premium_member" not in db_user)
+    if missing_flags:
+        apply_default_user_flags(db_user)
+
+    # Combine with telemetry snapshot; upsert once when possible
+    upserted = False
     try:
         if telemetry_enabled():
             context = build_login_context(request)  # best-effort; never raises
             db_user["login_context"] = context
-            # Use upsert to overwrite the latest snapshot without relying on ETags.
+            # Upsert persists both telemetry and any newly added flags
             _users.upsert_item(db_user)
+            upserted = True
     except Exception:
         # Never block login on telemetry failure
         pass
+
+    # If telemetry is disabled or upsert failed, still persist missing flags
+    if (not upserted) and missing_flags:
+        try:
+            _users.upsert_item(db_user)
+        except Exception:
+            # Still never block login if persistence fails
+            pass
 
     # For JWT sub, continue to use the stable username/id key
     return {"access_token": _make_jwt(db_user["id"])}
