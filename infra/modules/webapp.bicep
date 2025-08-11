@@ -49,6 +49,10 @@ param loginTelemetry string = '1'
 ])
 param geoipProvider string = 'azmaps'
 
+// ⟨NEW⟩ Codes container name (optional; default keeps infra loosely coupled and avoids hardcoding)
+@description('Cosmos container name for redemption codes')
+param codesContainerName string = 'codes'
+
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
@@ -80,6 +84,9 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         // Scheduler wiring
         { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
         { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
+
+        // ⟨NEW⟩ Codes container wiring
+        { name: 'CODES_CONTAINER',                     value: codesContainerName }
 
         // ⟨NEW⟩ Telemetry wiring (safe defaults; empty values are fine)
         { name: 'LOGIN_TELEMETRY',                     value: loginTelemetry }

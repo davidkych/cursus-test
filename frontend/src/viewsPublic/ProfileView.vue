@@ -1,9 +1,19 @@
 <!-- frontend/src/viewsPublic/ProfileView.vue -->
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
 import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
-import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
+import {
+  mdiAccount,
+  mdiMail,
+  mdiAsterisk,
+  mdiFormTextboxPassword,
+  mdiGithub,
+  /* ⟨NEW⟩ icons for redeem UI */
+  mdiTicketConfirmation,
+  mdiCheck,
+  mdiAlertCircle,
+} from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
 import BaseDivider from '@/components/BaseDivider.vue'
@@ -57,12 +67,50 @@ const passwordForm = reactive({
   password_confirmation: '',
 })
 
+/* ⟨NEW⟩ Redeem code form state */
+const redeemForm = reactive({ code: '' })
+const redeeming = ref(false)
+const redeemError = ref('')
+const redeemSuccess = ref('')
+
 const submitProfile = () => {
   mainStore.setUser(profileForm)
 }
 
 const submitPass = () => {
   //
+}
+
+/* ⟨NEW⟩ Redeem handler */
+const submitRedeem = async () => {
+  redeemError.value = ''
+  redeemSuccess.value = ''
+  const code = (redeemForm.code || '').trim()
+  if (!code) {
+    redeemError.value = 'Please enter a code'
+    return
+  }
+  redeeming.value = true
+  try {
+    const resp = await auth.redeem(code)
+    // Success message varies depending on what changed
+    if (resp?.applied) {
+      if (resp.is_admin) {
+        redeemSuccess.value = 'Admin privileges have been activated.'
+      } else if (resp.is_premium_member) {
+        redeemSuccess.value = 'Premium membership has been activated.'
+      } else {
+        redeemSuccess.value = 'Code redeemed successfully.'
+      }
+    } else {
+      redeemSuccess.value = 'Your account already has this feature. No changes needed.'
+    }
+    redeemForm.code = ''
+  } catch (err) {
+    redeemError.value = err?.message || 'Failed to redeem code'
+  } finally {
+    redeeming.value = false
+  }
 }
 </script>
 
@@ -96,6 +144,59 @@ const submitPass = () => {
           <div><span class="font-semibold text-gray-700 dark:text-gray-200">Locale:</span> <span class="text-gray-800 dark:text-gray-100">{{ localePref || '—' }}</span></div>
         </div>
       </CardBox>
+
+      <!-- ⟨NEW⟩ Redeem Code card (left, after avatar/telemetry) -->
+      <div class="mb-6 max-w-xl">
+        <CardBox is-form @submit.prevent="submitRedeem">
+          <FormField label="Redeem code" help="Enter your code to unlock features">
+            <FormControl
+              v-model="redeemForm.code"
+              :icon="mdiTicketConfirmation"
+              name="redeem_code"
+              placeholder="Enter code (e.g. VIP2025)"
+              autocomplete="one-time-code"
+              required
+            />
+          </FormField>
+
+          <!-- success / error banners -->
+          <template v-if="redeemError">
+            <div class="mb-2 flex items-center text-sm text-red-600">
+              <BaseButton
+                :icon="mdiAlertCircle"
+                color="danger"
+                rounded-full
+                small
+                class="mr-2 pointer-events-none"
+              />
+              <span class="break-words">{{ redeemError }}</span>
+            </div>
+          </template>
+          <template v-if="redeemSuccess">
+            <div class="mb-2 flex items-center text-sm text-green-700">
+              <BaseButton
+                :icon="mdiCheck"
+                color="success"
+                rounded-full
+                small
+                class="mr-2 pointer-events-none"
+              />
+              <span class="break-words">{{ redeemSuccess }}</span>
+            </div>
+          </template>
+
+          <template #footer>
+            <BaseButtons>
+              <BaseButton
+                type="submit"
+                color="info"
+                :label="redeeming ? 'Redeeming…' : 'Redeem'"
+                :disabled="redeeming"
+              />
+            </BaseButtons>
+          </template>
+        </CardBox>
+      </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CardBox is-form @submit.prevent="submitProfile">

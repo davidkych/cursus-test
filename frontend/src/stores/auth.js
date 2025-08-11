@@ -7,7 +7,7 @@
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { login as apiLogin, me as apiMe } from '@/services/auth.js'  // ← direct import; no top-level await
+import { login as apiLogin, me as apiMe, redeemCode as apiRedeemCode } from '@/services/auth.js'  // ← added redeemCode
 import { useMainStore } from '@/stores/main.js'                      // ← keep top-bar name in sync
 
 /* ─────────────────────────── constants ─────────────────────────── */
@@ -261,6 +261,29 @@ export const useAuth = defineStore('auth', () => {
     // Not resetting main store name here; authenticated layouts usually disappear after logout.
   }
 
+  /* ─────────────────────── NEW: redeem a code ─────────────────────── */
+  /**
+   * Redeem a backend-generated code, then refresh profile.
+   * Returns the server payload { is_admin, is_premium_member, applied }.
+   */
+  async function redeem(code) {
+    const resp = await apiRedeemCode(code)
+    if (MOCK) {
+      // In mock mode, reflect returned flags locally so UI updates immediately.
+      user.value = {
+        ...(user.value || {}),
+        is_admin: !!resp.is_admin,
+        is_premium_member: !!resp.is_premium_member,
+      }
+      syncMainStoreUser(user.value)
+      return resp
+    }
+    // Non-mock: fetch authoritative profile from the server
+    user.value = await apiMe()
+    syncMainStoreUser(user.value)
+    return resp
+  }
+
   return {
     // state
     token,
@@ -277,5 +300,6 @@ export const useAuth = defineStore('auth', () => {
     login,
     logout,
     setUser,
+    redeem, // ← NEW
   }
 })
