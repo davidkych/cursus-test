@@ -173,7 +173,7 @@ jobs:
             SCHED_FUNC="${PREFIX}-sched"
             STATIC_SITE="${PREFIX}-web"
 
-            COSMOS="$(az cosmosdb account list -g "$RG" --query "[0].name" -o tsv)"
+            COSMOS="$(az cosmosdb list -g "$RG" --query "[0].name" -o tsv)"
             if [ -z "$COSMOS" ]; then
               echo "No Cosmos DB account found in RG $RG" >&2
               exit 1
