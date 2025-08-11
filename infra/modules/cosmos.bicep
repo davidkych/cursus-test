@@ -102,34 +102,6 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
 }
 
 // ---------------------------------------------------------------------------
-// ✨ NEW: Codes container (shared RU/s)
-// - Stores redemption codes and usage metadata
-// - Partition key: /code  (fast point-reads by code)
-// - Unique by /code
-// - No TTL (per requirements)
-// ---------------------------------------------------------------------------
-resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
-  parent: cosmosDb
-  name:   'codes'
-  properties: {
-    resource: {
-      id: 'codes'
-      partitionKey: {
-        paths: [ '/code' ]
-        kind:  'Hash'
-      }
-      uniqueKeyPolicy: {
-        uniqueKeys: [
-          { paths: [ '/code' ] }
-        ]
-      }
-      // keep default indexing; no TTL
-    }
-    options: {}                  // inherit DB throughput (cheapest)
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 output cosmosAccountName string = cosmos.name
