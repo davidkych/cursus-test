@@ -6,6 +6,9 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, re
 
+# ⟨NEW⟩ shared defaults for user flags
+from .common import apply_default_user_flags
+
 # ───────────────────────── Cosmos setup ──────────────────────────
 _cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
 _database_name   = os.getenv("COSMOS_DATABASE")
@@ -77,6 +80,9 @@ def register(user: UserCreate):
         "profile_pic_type": user.profile_pic_type,         # 'default' | 'custom'
         "accepted_terms":   bool(user.accepted_terms),
     }
+
+    # ⟨NEW⟩ ensure new boolean flags exist with safe defaults (False/False)
+    apply_default_user_flags(doc)
 
     try:
         _users.create_item(doc)

@@ -6,6 +6,9 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, jwt
 
+# ⟨NEW⟩ shared defaults for user flags
+from .common import apply_default_user_flags
+
 # ───────────────────────── Cosmos setup ──────────────────────────
 _cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
 _database_name   = os.getenv("COSMOS_DATABASE")
@@ -40,6 +43,10 @@ class UserMeOut(BaseModel):
     country: Optional[str] = None
     profile_pic_id: Optional[int] = 1
     profile_pic_type: Optional[Literal["default", "custom"]] = "default"
+
+    # ⟨NEW⟩ account flags (default False for backward compatibility)
+    is_admin: bool = False
+    is_premium_member: bool = False
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
@@ -81,7 +88,9 @@ def me(request: Request):
     """
     Current-user profile endpoint.
     Requires: Authorization: Bearer <JWT>  (HS256 signed with JWT_SECRET).
-    Returns extended 'login_context' (latest snapshot) when available.
+    Returns extended 'login_context' (latest snapshot) and the new
+    'is_admin' / 'is_premium_member' flags. Missing flags default to False.
+    Opportunistically persists defaults if flags were missing.
     """
     token = _extract_bearer_token(request)
     username = _decode_jwt(token)
@@ -90,6 +99,10 @@ def me(request: Request):
     if not doc:
         # token is valid but user doc is gone → treat as unauthorized
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    # ⟨NEW⟩ ensure flags exist (in-memory defaults for response)
+    missing_flags = ("is_admin" not in doc) or ("is_premium_member" not in doc)
+    apply_default_user_flags(doc)
 
     # Build a safe profile payload (omit hashed password, etc.)
     # Note: pydantic will coerce ISO strings (created/dob) into datetime/date.
@@ -103,10 +116,21 @@ def me(request: Request):
         "country":          doc.get("country"),
         "profile_pic_id":   int(doc.get("profile_pic_id", 1)),
         "profile_pic_type": doc.get("profile_pic_type", "default"),
+        # ⟨NEW⟩ flags included in response (default False)
+        "is_admin":          bool(doc.get("is_admin", False)),
+        "is_premium_member": bool(doc.get("is_premium_member", False)),
     }
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     if "login_context" in doc and isinstance(doc["login_context"], dict):
         payload["login_context"] = doc["login_context"]
+
+    # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
+    if missing_flags:
+        try:
+            _users.upsert_item(doc)
+        except Exception:
+            # Never fail the /me call because of persistence issues
+            pass
 
     return payload

@@ -93,6 +93,8 @@ export async function authFetch(url, init = {}) {
  *   profile_pic_type:   'default'|'custom',
  *   accepted_terms:     boolean
  * }
+ * Note: server sets `is_admin` and `is_premium_member` to false by default
+ * and does not accept them from the client.
  */
 export async function register(payload) {
   if (MOCK) {
@@ -149,6 +151,9 @@ export async function login(payload) {
  * {
  *   id, username, email, created, gender, dob, country,
  *   profile_pic_id, profile_pic_type,
+ *   // NEW flags:
+ *   is_admin: boolean,
+ *   is_premium_member: boolean,
  *   // NEW (optional):
  *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
  * }
@@ -165,6 +170,9 @@ export async function me() {
       country: 'HKG',
       profile_pic_id: 1,
       profile_pic_type: 'default',
+      // NEW flags with defaults
+      is_admin: false,
+      is_premium_member: false,
       // Example shape; real backend may omit or differ in mock
       login_context: {
         last_login_utc: new Date().toISOString(),
