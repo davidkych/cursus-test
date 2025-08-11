@@ -31,12 +31,15 @@ jobs:
       prefix:            ${{ steps.compute.outputs.prefix }}
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0            # ← ensure accurate path diff for verdicts
 
       - id: filter
         uses: dorny/paths-filter@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           list-files: json   # ⟵ expose <filter>_files and <filter>_count
+          ref: ${{ github.sha }}    # ← pin comparison target to this commit
           filters: |
             github:
               - '.github/**'              # constitutional GitHub
@@ -66,6 +69,9 @@ jobs:
           PREFIX="cursus-test1"
 
           # ── Decide what to run per your rules ─────────────────────────────
+          # a) github = true  → all
+          # b) infra  = true  → all
+          # c) else, run only the territories with verdict=true
           run_infra="false"
           if [ "$github" = "true" ] || [ "$infra" = "true" ]; then
             run_infra="true"
@@ -115,16 +121,16 @@ jobs:
           if len(files) > 200:
               print(f"  … and {len(files)-200} more")
           PY
-                      else
-                        echo "  (no files matched)"
-                      fi
-                      echo "::endgroup::"
-                    }
-                    export FNAME=github  FFILES='${{ steps.filter.outputs.github_files }}';    summarize github    '${{ steps.filter.outputs.github }}'    '${{ steps.filter.outputs.github_files }}'    '${{ steps.filter.outputs.github_count }}'
-                    export FNAME=infra   FFILES='${{ steps.filter.outputs.infra_files }}';     summarize infra     '${{ steps.filter.outputs.infra }}'     '${{ steps.filter.outputs.infra_files }}'     '${{ steps.filter.outputs.infra_count }}'
-                    export FNAME=scheduler FFILES='${{ steps.filter.outputs.scheduler_files }}'; summarize scheduler '${{ steps.filter.outputs.scheduler }}' '${{ steps.filter.outputs.scheduler_files }}' '${{ steps.filter.outputs.scheduler_count }}'
-                    export FNAME=staticweb FFILES='${{ steps.filter.outputs.staticweb_files }}'; summarize staticweb '${{ steps.filter.outputs.staticweb }}' '${{ steps.filter.outputs.staticweb_files }}' '${{ steps.filter.outputs.staticweb_count }}'
-                    export FNAME=webapp  FFILES='${{ steps.filter.outputs.webapp_files }}';    summarize webapp    '${{ steps.filter.outputs.webapp }}'    '${{ steps.filter.outputs.webapp_files }}'    '${{ steps.filter.outputs.webapp_count }}'
+            else
+              echo "  (no files matched)"
+            fi
+            echo "::endgroup::"
+          }
+          export FNAME=github    FFILES='${{ steps.filter.outputs.github_files }}';     summarize github    '${{ steps.filter.outputs.github }}'    '${{ steps.filter.outputs.github_files }}'    '${{ steps.filter.outputs.github_count }}'
+          export FNAME=infra     FFILES='${{ steps.filter.outputs.infra_files }}';      summarize infra     '${{ steps.filter.outputs.infra }}'     '${{ steps.filter.outputs.infra_files }}'     '${{ steps.filter.outputs.infra_count }}'
+          export FNAME=scheduler FFILES='${{ steps.filter.outputs.scheduler_files }}';  summarize scheduler '${{ steps.filter.outputs.scheduler }}' '${{ steps.filter.outputs.scheduler_files }}' '${{ steps.filter.outputs.scheduler_count }}'
+          export FNAME=staticweb FFILES='${{ steps.filter.outputs.staticweb_files }}'; summarize staticweb '${{ steps.filter.outputs.staticweb }}' '${{ steps.filter.outputs.staticweb_files }}' '${{ steps.filter.outputs.staticweb_count }}'
+          export FNAME=webapp    FFILES='${{ steps.filter.outputs.webapp_files }}';     summarize webapp    '${{ steps.filter.outputs.webapp }}'    '${{ steps.filter.outputs.webapp_files }}'    '${{ steps.filter.outputs.webapp_count }}'
 
   # ─────────────────────────── infra (conditional) ───────────────────────────
   infra:

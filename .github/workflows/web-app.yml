@@ -125,6 +125,70 @@ jobs:
           done
           echo "⚠ still not healthy after 3 min – continuing"
 
+      # ── Mark deploy start time (UTC) ---------------------------------------
+      - name: Mark deploy start time
+        id: mark_start
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime, os
+          now = datetime.datetime.utcnow().replace(microsecond=0)
+          iso = now.isoformat() + "Z"
+          epoch = int(now.timestamp())
+          print(f"📍 Deploy start (UTC): {iso}")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              print(f"start_iso={iso}", file=fh)
+              print(f"start_epoch={epoch}", file=fh)
+          PY
+
+      # ── Prepare Python log filter script -----------------------------------
+      - name: Prepare Python log filter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > filter_logs.py <<'PY'
+          import os, sys, re, datetime
+
+          START_EPOCH = int(os.environ.get("START_EPOCH", "0"))
+
+          iso_re = re.compile(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})')
+          us_re  = re.compile(r'(\d{2}/\d{2}/\d{4})\s+(\d{2}:\d{2}:\d{2})')
+
+          def parse_epoch(line: str):
+              s = line.lstrip()
+              if s.startswith("WARNING: "):
+                  s = s[9:]
+              m = iso_re.search(s)
+              if m:
+                  try:
+                      dt = datetime.datetime.fromisoformat(m.group(1))
+                      return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp())
+                  except Exception:
+                      return None
+              m = us_re.search(s)
+              if m:
+                  try:
+                      dt = datetime.datetime.strptime(f"{m.group(1)} {m.group(2)}", "%m/%d/%Y %H:%M:%S")
+                      return int(dt.replace(tzinfo=datetime.timezone.utc).timestamp())
+                  except Exception:
+                      return None
+              return None
+
+          printed_after = False
+          for raw in sys.stdin:
+              line = raw.rstrip("\n")
+              ep = parse_epoch(line)
+              if ep is not None:
+                  if ep >= START_EPOCH:
+                      print(line)
+                      printed_after = True
+              else:
+                  if printed_after:
+                      print(line)
+          PY
+                    python -V
+
       # ── ZIP deploy (Run-From-Package friendly) -----------------------------
       - name: ZIP-deploy FastAPI web-app
         shell: bash
@@ -140,8 +204,14 @@ jobs:
             echo "🚀 ZIP-deploy attempt $attempt"
             if az webapp deploy -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
                                 --src-path app.zip --type zip --timeout 600; then
-              echo "📡 streaming container log …"
-              timeout 120s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} | tee live.log || true
+              echo "📡 streaming container log (filtered since ${{ steps.mark_start.outputs.start_iso }}) …"
+              export START_EPOCH="${{ steps.mark_start.outputs.start_epoch }}"
+              # Save raw log and print only lines at/after START_EPOCH
+              timeout 120s az webapp log tail -g ${{ inputs.RG }} -n ${{ inputs.APP }} \
+                | tee live.log \
+                | python filter_logs.py \
+                | tee live.filtered.log || true
+
               sleep 15
 
               code=$(curl -s -o /dev/null -w '%{http_code}' \
@@ -178,9 +248,11 @@ jobs:
           echo "💥 health check failed after 150 s"
           exit 1
 
-      # ── Upload live log on failure ----------------------------------------
+      # ── Upload logs on failure (raw + filtered) ----------------------------
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: webapp-log
-          path: live.log
+          path: |
+            live.log
+            live.filtered.log
