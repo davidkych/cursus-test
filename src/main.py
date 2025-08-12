@@ -5,14 +5,43 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-frontend_origin = os.getenv("FRONTEND_ORIGIN", "*")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[frontend_origin] if frontend_origin != "*" else ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# ── CORS (robust + deploy-safe)
+# Accept a comma/space-separated FRONTEND_ORIGIN list.
+# If none provided, fall back to "*" with allow_credentials=False so the browser
+# accepts Authorization headers cross-origin without requiring ACAO to be non-wildcard.
+def _parse_origins(env_value: str) -> list[str]:
+    if not env_value:
+        return []
+    # split by comma or whitespace, trim, drop empties and trailing slashes
+    raw = [p.strip() for chunk in env_value.split(",") for p in chunk.split()]
+    origins = []
+    for o in raw:
+        o = o.rstrip("/")  # normalize
+        if o and o not in origins:
+            origins.append(o)
+    return origins
+
+_frontend_origins = _parse_origins(os.getenv("FRONTEND_ORIGIN", ""))
+
+if _frontend_origins:
+    # Concrete allowed origins → credentials may be enabled safely
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_frontend_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # No specific origin configured → use wildcard and disable credentials.
+    # This still allows Authorization headers (non-cookie auth) with proper preflight.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # ── core modules -------------------------------------------------------------
 from routers.hello.endpoints           import router as hello_router
