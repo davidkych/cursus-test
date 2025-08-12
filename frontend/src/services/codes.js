@@ -1,19 +1,13 @@
 // frontend/src/services/codes.js
 // Service wrapper for code functions metadata + code generation endpoints.
-// - Avoids hardcoding API base (uses VITE_API_BASE if provided).
-// - Uses plain fetch for OPEN endpoints (no Authorization header) to avoid
-//   credentialed CORS requirements during deployment.
-// - Returns parsed JSON or throws Error(message) normalized from backend.
-
-// NOTE: Keep authFetch for endpoints that truly require Authorization (e.g., redeem),
-// but use plain fetch for the open generation/list endpoints to prevent CORS issues.
+// - Uses *open* fetch (no Authorization header) for OPEN endpoints to avoid CORS with credentials.
+// - Keeps the same error normalization and API base handling as before.
 
 const API_BASE = (import.meta.env.VITE_API_BASE || '').replace(/\/+$/, '')
 
 /* ───────────────────────── helpers ───────────────────────── */
 function isoSecondsZ(value) {
   // Normalize any input into ISO UTC with seconds, no milliseconds.
-  // If parsing fails, return the original (backend will 422 and bubble nicely).
   try {
     const d = new Date(value)
     if (!isNaN(d.getTime())) return d.toISOString().replace(/\.\d{3}Z$/, 'Z')
@@ -26,13 +20,11 @@ function isoSecondsZ(value) {
  * Works with FastAPI ValidationError shapes and generic JSON/text bodies.
  */
 async function handleError(res, fallbackMsg) {
-  // Try JSON first
   try {
     const body = await res.json()
     const d = body?.detail
     if (typeof d === 'string') throw new Error(d)
     if (Array.isArray(d)) {
-      // FastAPI 422: [{loc, msg, type}, ...]
       const msg = d.map(e => (e?.msg || e?.error || JSON.stringify(e))).join(' • ')
       throw new Error(msg)
     }
@@ -43,7 +35,6 @@ async function handleError(res, fallbackMsg) {
       throw new Error(body.message)
     }
   } catch {
-    // Fall back to text body
     try {
       const text = await res.text()
       if (text && text.trim()) throw new Error(text.trim())
@@ -52,15 +43,22 @@ async function handleError(res, fallbackMsg) {
   throw new Error(fallbackMsg)
 }
 
+/** OPEN fetch wrapper: never sets Authorization; keeps JSON defaults consistent. */
+async function openFetch(url, init = {}) {
+  const headers = new Headers(init.headers || {})
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json')
+  const res = await fetch(url, { ...init, headers })
+  return res
+}
+
 /* ───────────────────────── API ───────────────────────── */
 
 /**
- * Fetch UI-friendly function metadata (OPEN endpoint).
- * Uses plain fetch (no Authorization header).
+ * Fetch UI-friendly function metadata (OPEN endpoint; no auth header).
  * @returns {Promise<Array<{key:string,label:string,description:string}>>}
  */
 export async function listFunctions() {
-  const res = await fetch(`${API_BASE}/api/auth/codes/functions`, {
+  const res = await openFetch(`${API_BASE}/api/auth/codes/functions`, {
     method: 'GET',
     headers: { Accept: 'application/json' },
   })
@@ -69,8 +67,7 @@ export async function listFunctions() {
 }
 
 /**
- * Generate batch one-off codes (OPEN endpoint).
- * Uses plain fetch (no Authorization header).
+ * Generate batch one-off codes (OPEN; no auth header).
  * @param {{ function: string, expires_at: string, count: number }} payload
  * @returns {Promise<{ count: number, codes: Array<{code:string,type:string,function:string,expires_at:string,created_at:string}> }>}
  */
@@ -80,7 +77,7 @@ export async function generateOneOff(payload) {
     expires_at: isoSecondsZ(payload.expires_at),
     count: Number.isFinite(Number(payload.count)) ? Number(payload.count) : 1,
   })
-  const res = await fetch(`${API_BASE}/api/auth/codes/generate/oneoff`, {
+  const res = await openFetch(`${API_BASE}/api/auth/codes/generate/oneoff`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
@@ -93,8 +90,7 @@ export async function generateOneOff(payload) {
 }
 
 /**
- * Generate a reusable code (OPEN endpoint).
- * Uses plain fetch (no Authorization header).
+ * Generate a reusable code (OPEN; no auth header).
  * @param {{ code: string, function: string, expires_at: string }} payload
  * @returns {Promise<{ code:string,type:string,function:string,expires_at:string,created_at:string }>}
  */
@@ -104,7 +100,7 @@ export async function generateReusable(payload) {
     function: String(payload.function || '').trim(),
     expires_at: isoSecondsZ(payload.expires_at),
   })
-  const res = await fetch(`${API_BASE}/api/auth/codes/generate/reusable`, {
+  const res = await openFetch(`${API_BASE}/api/auth/codes/generate/reusable`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
@@ -117,8 +113,7 @@ export async function generateReusable(payload) {
 }
 
 /**
- * Generate a single-use code (OPEN endpoint).
- * Uses plain fetch (no Authorization header).
+ * Generate a single-use code (OPEN; no auth header).
  * @param {{ code: string, function: string, expires_at: string }} payload
  * @returns {Promise<{ code:string,type:string,function:string,expires_at:string,created_at:string }>}
  */
@@ -128,7 +123,7 @@ export async function generateSingle(payload) {
     function: String(payload.function || '').trim(),
     expires_at: isoSecondsZ(payload.expires_at),
   })
-  const res = await fetch(`${API_BASE}/api/auth/codes/generate/single`, {
+  const res = await openFetch(`${API_BASE}/api/auth/codes/generate/single`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json; charset=utf-8',

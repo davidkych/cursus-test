@@ -67,27 +67,6 @@ jobs:
             echo "::add-mask::$TOKEN"
             echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
 
-      # ── NEW: Set FRONTEND_ORIGIN on the Web App to the Static Web hostname ─
-      - name: Configure FRONTEND_ORIGIN on API
-        uses: azure/CLI@v2
-        with:
-          inlineScript: |
-            set -eo pipefail
-            HOST=$(az staticwebapp show \
-                     --name "${STATIC_SITE_NAME}" \
-                     --resource-group "${RG}" \
-                     --query defaultHostname -o tsv)
-            if [ -z "$HOST" ]; then
-              echo "Static Web App hostname not found for ${STATIC_SITE_NAME}" >&2
-              exit 1
-            fi
-            ORIGIN="https://${HOST}"
-            echo "Setting FRONTEND_ORIGIN=${ORIGIN} on Web App ${APP}"
-            az webapp config appsettings set \
-              --resource-group "${RG}" \
-              --name "${APP}" \
-              --settings FRONTEND_ORIGIN="${ORIGIN}"
-
       # ── Deploy ────────────────────────────────────────────────────────────
       - name: Deploy to Azure Static Web Apps
         uses: Azure/static-web-apps-deploy@v1          # pinned
