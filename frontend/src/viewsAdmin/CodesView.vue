@@ -17,7 +17,6 @@ import FormField from '@/components/FormField.vue'
 import FormControl from '@/components/FormControl.vue'
 import BaseButton from '@/components/BaseButton.vue'
 import BaseButtons from '@/components/BaseButtons.vue'
-import BaseDivider from '@/components/BaseDivider.vue'
 
 import {
   listFunctions,
@@ -27,24 +26,23 @@ import {
 } from '@/services/codes.js'
 
 /* ─────────────────────────── state ─────────────────────────── */
-const functions = ref(/** @type {Array<{key:string,label:string,description:string}>} */([]))
+const functions = ref([])
 const loadingFunctions = ref(false)
 const errorFunctions = ref('')
 
 const form = reactive({
-  // NOTE: FormControl(select) may bind either a string id or an {id,label} object.
-  type: 'oneoff',         // 'oneoff' | 'reusable' | 'single' (or option object)
+  type: 'oneoff',     // 'oneoff' | 'reusable' | 'single'
   functionKey: '',
-  expiresLocal: '',       // HTML datetime-local value (blank by default)
-  count: 10,              // only for oneoff
-  code: '',               // only for reusable/single
+  expiresLocal: '',   // value from <input type="datetime-local">
+  count: 10,          // only for oneoff
+  code: '',           // only for reusable/single
 })
 
 const submitting = ref(false)
 const submitError = ref('')
 
 /** Generated rows normalized for the table */
-const rows = ref(/** @type {Array<{code:string,type:string,function:string,expires_at:string,created_at:string}>} */([]))
+const rows = ref([])
 
 const hasRows = computed(() => rows.value.length > 0)
 const selectedFunction = computed(() =>
@@ -52,9 +50,9 @@ const selectedFunction = computed(() =>
 )
 
 /* Resolve current type id regardless of how the select binds (string or object) */
-const selectedTypeId = computed(() => {
-  return typeof form.type === 'string' ? form.type : (form.type && form.type.id) || ''
-})
+const selectedTypeId = computed(() =>
+  typeof form.type === 'string' ? form.type : (form.type && form.type.id) || ''
+)
 
 /* ─────────────────────── lifecycle/loaders ─────────────────────── */
 onMounted(async () => {
@@ -75,13 +73,45 @@ async function loadFunctions() {
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
+/**
+ * Parse various local date strings into a Date and return ISO UTC with seconds (no ms).
+ * - Primary path: native datetime-local value "YYYY-MM-DDTHH:mm"
+ * - Fallback: locale strings like "22 / 08 / 2025, 02:02 am"
+ */
 function toUtcIso(localValue) {
-  // Expecting 'YYYY-MM-DDTHH:mm' or similar from <input type="datetime-local">
-  // If blank or invalid, return ''
   if (!localValue) return ''
-  const d = new Date(localValue)
+
+  let d = null
+
+  // 1) Native datetime-local (YYYY-MM-DDTHH:mm[..])
+  // Browsers treat this as local time when passed to new Date(...)
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(\:\d{2})?$/.test(localValue)) {
+    d = new Date(localValue)
+  }
+
+  // 2) Fallback: "DD / MM / YYYY, HH:mm am|pm"
+  if (!d || isNaN(d.getTime())) {
+    const m = localValue
+      .trim()
+      .match(/^(\d{1,2})\s*\/\s*(\d{1,2})\s*\/\s*(\d{4})\s*,\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i)
+    if (m) {
+      let [, dd, mm, yyyy, hh, min, ap] = m
+      dd = Number(dd)
+      mm = Number(mm)
+      let H = Number(hh) % 12
+      if (/pm/i.test(ap)) H += 12
+      d = new Date(Number(yyyy), mm - 1, dd, H, Number(min), 0)
+    }
+  }
+
+  // 3) Last attempt: let the engine try
+  if (!d || isNaN(d.getTime())) d = new Date(localValue)
+
   if (isNaN(d.getTime())) return ''
-  return d.toISOString()
+
+  // Return ISO with seconds, no milliseconds
+  const iso = d.toISOString().replace(/\.\d{3}Z$/, 'Z')
+  return iso
 }
 
 function ensureFuture(iso) {
@@ -102,13 +132,7 @@ function toCsv(data) {
   }
   const lines = [header.join(',')]
   for (const r of data) {
-    lines.push([
-      esc(r.code),
-      esc(r.type),
-      esc(r.function),
-      esc(r.expires_at),
-      esc(r.created_at),
-    ].join(','))
+    lines.push([esc(r.code), esc(r.type), esc(r.function), esc(r.expires_at), esc(r.created_at)].join(','))
   }
   return lines.join('\n')
 }
@@ -141,6 +165,7 @@ async function onSubmit() {
     submitError.value = 'Please select a function'
     return
   }
+
   const iso = toUtcIso(form.expiresLocal)
   if (!iso) {
     submitError.value = 'Please select a valid expiry date & time'
@@ -154,7 +179,7 @@ async function onSubmit() {
   const typeId = selectedTypeId.value
 
   if (typeId === 'oneoff') {
-    if (!form.count || form.count < 1) {
+    if (!form.count || Number(form.count) < 1) {
       submitError.value = 'Count must be at least 1'
       return
     }
@@ -182,7 +207,7 @@ async function onSubmit() {
         expires_at: it.expires_at,
         created_at: it.created_at,
       }))
-      rows.value = mapped.concat(rows.value)     // prepend latest
+      rows.value = mapped.concat(rows.value)
     } else if (typeId === 'reusable') {
       result = await generateReusable({
         code: form.code.trim(),
@@ -213,6 +238,7 @@ async function onSubmit() {
       rows.value = [row, ...rows.value]
     }
   } catch (err) {
+    // Surface FastAPI error details coming from services/codes.js
     submitError.value = err?.message || 'Generation failed'
   } finally {
     submitting.value = false
@@ -232,10 +258,7 @@ async function copyAllCodes() {
 function downloadAllCsv() {
   if (!rows.value.length) return
   const csv = toCsv(rows.value)
-  const ts = new Date()
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\..+/, '')
+  const ts = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '')
   downloadCsv(`codes_${ts}.csv`, csv)
 }
 </script>
@@ -248,16 +271,9 @@ function downloadAllCsv() {
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- ────────────── FORM ────────────── -->
         <CardBox is-form @submit.prevent="onSubmit">
-          <!-- any submit-level error -->
           <template v-if="submitError">
             <div class="mb-4 flex items-center text-sm text-red-600">
-              <BaseButton
-                :icon="mdiAlertCircle"
-                color="danger"
-                rounded-full
-                small
-                class="mr-2 pointer-events-none"
-              />
+              <BaseButton :icon="mdiAlertCircle" color="danger" rounded-full small class="mr-2 pointer-events-none" />
               <span class="break-words">{{ submitError }}</span>
             </div>
           </template>
@@ -290,7 +306,7 @@ function downloadAllCsv() {
             </div>
           </FormField>
 
-          <FormField label="Expiry (UTC will be sent)" help="Local date & time; will be converted to UTC ISO on submit">
+          <FormField label="Expiry (UTC will be sent)" help="Local date & time; converted to UTC ISO on submit">
             <FormControl
               v-model="form.expiresLocal"
               type="datetime-local"
@@ -315,12 +331,7 @@ function downloadAllCsv() {
 
           <template v-else>
             <FormField label="Code" help="Case-sensitive (you provide the value)">
-              <FormControl
-                v-model="form.code"
-                name="code"
-                placeholder="e.g., TEAM2025"
-                required
-              />
+              <FormControl v-model="form.code" name="code" placeholder="e.g., TEAM2025" required />
             </FormField>
           </template>
 
@@ -340,13 +351,7 @@ function downloadAllCsv() {
         <CardBox>
           <div class="mb-4 flex items-center justify-between">
             <div class="flex items-center text-gray-700 dark:text-gray-200">
-              <BaseButton
-                :icon="mdiTable"
-                color="contrast"
-                rounded-full
-                small
-                class="mr-2 pointer-events-none"
-              />
+              <BaseButton :icon="mdiTable" color="contrast" rounded-full small class="mr-2 pointer-events-none" />
               <span class="font-semibold">Results</span>
               <span class="ml-2 text-sm opacity-70">({{ rows.length }})</span>
             </div>
@@ -392,26 +397,14 @@ function downloadAllCsv() {
                 </tr>
               </thead>
               <tbody>
-                <tr
-                  v-for="r in rows"
-                  :key="`${r.code}-${r.created_at}`"
-                  class="border-b border-gray-100 dark:border-slate-800"
-                >
+                <tr v-for="r in rows" :key="`${r.code}-${r.created_at}`" class="border-b border-gray-100 dark:border-slate-800">
                   <td class="px-3 py-2 font-mono text-xs break-all">{{ r.code }}</td>
                   <td class="px-3 py-2">{{ r.type }}</td>
                   <td class="px-3 py-2">{{ r.function }}</td>
                   <td class="px-3 py-2">{{ r.expires_at }}</td>
                   <td class="px-3 py-2">{{ r.created_at }}</td>
                   <td class="px-3 py-2">
-                    <BaseButton
-                      :icon="mdiContentCopy"
-                      color="info"
-                      outline
-                      small
-                      label="Copy"
-                      title="Copy code"
-                      @click="copyRowCode(r.code)"
-                    />
+                    <BaseButton :icon="mdiContentCopy" color="info" outline small label="Copy" title="Copy code" @click="copyRowCode(r.code)" />
                   </td>
                 </tr>
               </tbody>
