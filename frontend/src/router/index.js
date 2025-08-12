@@ -130,6 +130,13 @@ const adminRoutes = [
     name: 'adm-responsive',
     component: resolveView('ResponsiveView.vue', 'admin'),
   },
+  // ⟨NEW⟩ Codes generator view (admin)
+  {
+    meta: { title: 'Codes' },
+    path: '/admin/codes',
+    name: 'adm-codes',
+    component: resolveView('CodesView.vue', 'admin'),
+  },
 ]
 
 // ────────────────────────────────────────────────────────────────────────────────

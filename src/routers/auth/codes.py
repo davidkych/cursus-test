@@ -45,8 +45,8 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, secrets, string, jwt
 
-# Single source of truth for functions
-from .common import FUNCTION_REGISTRY, apply_function, apply_default_user_flags
+# Single source of truth for functions + UI metadata
+from .common import FUNCTION_REGISTRY, FUNCTION_METADATA, apply_function, apply_default_user_flags
 
 # ───────────────────────── Cosmos setup ──────────────────────────
 _cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
@@ -210,6 +210,22 @@ router = APIRouter(
     tags=["auth-codes"]
 )
 
+# ───────────────────────── NEW: Open function metadata endpoint ──
+@router.get("/functions")
+def list_functions():
+    """
+    Open endpoint returning UI-friendly function metadata, avoiding any
+    frontend hardcoding. Only exposes functions that are actually registered.
+    Response: [{ key, label, description }]
+    """
+    items = []
+    for key in FUNCTION_REGISTRY.keys():
+        meta = FUNCTION_METADATA.get(key, {})
+        label = meta.get("label") or key.replace("_", " ").title()
+        description = meta.get("description") or ""
+        items.append({"key": key, "label": label, "description": description})
+    return items
+
 # ───────────────────────── Generation endpoints (OPEN) ───────────
 @router.post("/generate/oneoff")
 def generate_oneoff(payload: OneOffGenerateIn):
@@ -221,12 +237,13 @@ def generate_oneoff(payload: OneOffGenerateIn):
         # Retry on rare collision
         for _attempt in range(5):
             code = _gen_code(20)
+            now_iso = _iso(_now_utc())
             doc = {
                 "id":          code,
                 "code":        code,
                 "type":        "oneoff",
                 "function":    payload.function,
-                "created_at":  _iso(_now_utc()),
+                "created_at":  now_iso,
                 "expires_at":  _iso(exp),
                 "consumed":    False,
                 "consumed_by": None,
@@ -234,7 +251,13 @@ def generate_oneoff(payload: OneOffGenerateIn):
             }
             try:
                 _create_code_doc(doc)
-                created.append({"code": code, "type": "oneoff", "function": payload.function, "expires_at": doc["expires_at"]})
+                created.append({
+                    "code":        code,
+                    "type":        "oneoff",
+                    "function":    payload.function,
+                    "expires_at":  doc["expires_at"],
+                    "created_at":  doc["created_at"],
+                })
                 break
             except exceptions.CosmosResourceExistsError:
                 # extremely unlikely; try a new code
@@ -251,12 +274,13 @@ def generate_reusable(payload: ReusableGenerateIn):
     _validate_function_key(payload.function)
 
     code = payload.code
+    now_iso = _iso(_now_utc())
     doc = {
         "id":             code,
         "code":           code,
         "type":           "reusable",
         "function":       payload.function,
-        "created_at":     _iso(_now_utc()),
+        "created_at":     now_iso,
         "expires_at":     _iso(exp),
         "redeemed_by":    [],
         "redeemed_count": 0,
@@ -265,7 +289,13 @@ def generate_reusable(payload: ReusableGenerateIn):
         _create_code_doc(doc)
     except exceptions.CosmosResourceExistsError:
         raise HTTPException(status_code=409, detail="Code already exists")
-    return {"code": code, "type": "reusable", "function": payload.function, "expires_at": doc["expires_at"]}
+    return {
+        "code":        code,
+        "type":        "reusable",
+        "function":    payload.function,
+        "expires_at":  doc["expires_at"],
+        "created_at":  doc["created_at"],
+    }
 
 @router.post("/generate/single")
 def generate_single(payload: SingleGenerateIn):
@@ -274,12 +304,13 @@ def generate_single(payload: SingleGenerateIn):
     _validate_function_key(payload.function)
 
     code = payload.code
+    now_iso = _iso(_now_utc())
     doc = {
         "id":          code,
         "code":        code,
         "type":        "single",
         "function":    payload.function,
-        "created_at":  _iso(_now_utc()),
+        "created_at":  now_iso,
         "expires_at":  _iso(exp),
         "consumed":    False,
         "consumed_by": None,
@@ -289,7 +320,13 @@ def generate_single(payload: SingleGenerateIn):
         _create_code_doc(doc)
     except exceptions.CosmosResourceExistsError:
         raise HTTPException(status_code=409, detail="Code already exists")
-    return {"code": code, "type": "single", "function": payload.function, "expires_at": doc["expires_at"]}
+    return {
+        "code":        code,
+        "type":        "single",
+        "function":    payload.function,
+        "expires_at":  doc["expires_at"],
+        "created_at":  doc["created_at"],
+    }
 
 # ───────────────────────── Redemption endpoint (AUTH) ────────────
 @router.post("/redeem")

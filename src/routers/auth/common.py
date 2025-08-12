@@ -8,6 +8,9 @@ Shared helpers for auth-related user document defaults and function application.
 
 - FUNCTION_REGISTRY: single source of truth for supported "functions"
   that can be applied to a user account via code redemption.
+- FUNCTION_METADATA: UI-friendly metadata for each registered function,
+  returned by the open /api/auth/codes/functions endpoint to avoid
+  any hardcoding in the frontend.
 - apply_function(user_doc, fn_key): validates and applies a registered function
   to the given user document (mutates in place).
 """
@@ -57,6 +60,20 @@ FUNCTION_REGISTRY: Dict[str, Callable[[Dict[str, Any]], None]] = {
     # Add future functions here (e.g., "beta_access": _fn_beta_access)
 }
 
+# UI-facing metadata (labels/descriptions) for functions.
+# Keys MUST mirror FUNCTION_REGISTRY to avoid exposing unsupported items.
+FUNCTION_METADATA: Dict[str, Dict[str, str]] = {
+    "is_admin": {
+        "label": "Admin Access",
+        "description": "Grants administrative privileges to the account.",
+    },
+    "is_premium_member": {
+        "label": "Premium Member",
+        "description": "Enables premium features for the account.",
+    },
+    # Extend alongside FUNCTION_REGISTRY for future functions.
+}
+
 
 def apply_function(user_doc: Dict[str, Any], fn_key: str) -> None:
     """
@@ -74,5 +91,6 @@ __all__ = [
     "DEFAULT_USER_FLAGS",
     "apply_default_user_flags",
     "FUNCTION_REGISTRY",
+    "FUNCTION_METADATA",
     "apply_function",
 ]

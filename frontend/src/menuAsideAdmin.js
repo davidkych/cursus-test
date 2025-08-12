@@ -45,6 +45,12 @@ export default [
     label: 'Responsive',
     icon: mdiResponsive,
   },
+  // ⟨NEW⟩ Codes generator
+  {
+    to: '/admin/codes',
+    label: 'Codes',
+    icon: mdiViewList,
+  },
   {
     to: '/style',              // style selector (top-level guest route)
     label: 'Styles',
