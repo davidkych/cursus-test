@@ -1,8 +1,9 @@
 <!-- frontend/src/viewsPublic/ProfileView.vue -->
 <script setup>
-import { reactive, computed } from 'vue'
+import { reactive, computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
 import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
+import { redeemCode as apiRedeemCode } from '@/services/auth.js' /* ⟨NEW⟩ */
 import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
@@ -64,6 +65,32 @@ const submitProfile = () => {
 const submitPass = () => {
   //
 }
+
+/* ⟨NEW⟩ Redeem code form */
+const redeemForm = reactive({ code: '' })
+const redeemLoading = ref(false)
+const redeemError = ref('')
+const redeemSuccess = ref('')
+
+const submitRedeem = async () => {
+  redeemError.value = ''
+  redeemSuccess.value = ''
+  if (!redeemForm.code) {
+    redeemError.value = 'Please enter a code'
+    return
+  }
+  redeemLoading.value = true
+  try {
+    const updated = await apiRedeemCode(redeemForm.code)   // returns /me payload
+    auth.setUser(updated)                                  // update store & top-bar
+    redeemSuccess.value = 'Code redeemed successfully.'
+    redeemForm.code = ''
+  } catch (err) {
+    redeemError.value = err?.message || 'Redeem failed'
+  } finally {
+    redeemLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -82,6 +109,42 @@ const submitPass = () => {
       </SectionTitleLineWithButton>
 
       <UserCard class="mb-6" />
+
+      <!-- ⟨NEW⟩ Redeem code (left, after avatar) -->
+      <div class="mb-6">
+        <CardBox class="max-w-md" is-form @submit.prevent="submitRedeem">
+          <template v-if="redeemError">
+            <div class="mb-3 text-sm text-red-600">
+              {{ redeemError }}
+            </div>
+          </template>
+          <template v-if="redeemSuccess && !redeemError">
+            <div class="mb-3 text-sm text-green-600">
+              {{ redeemSuccess }}
+            </div>
+          </template>
+
+          <FormField label="Redeem code" help="Case-sensitive">
+            <FormControl
+              v-model="redeemForm.code"
+              name="redeem_code"
+              placeholder="Enter your code"
+              required
+            />
+          </FormField>
+
+          <template #footer>
+            <BaseButtons>
+              <BaseButton
+                type="submit"
+                color="info"
+                :label="redeemLoading ? 'Redeeming…' : 'Redeem'"
+                :disabled="redeemLoading"
+              />
+            </BaseButtons>
+          </template>
+        </CardBox>
+      </div>
 
       <!-- ⟨NEW⟩ Telemetry panel: shows right after the Howdy greeting -->
       <CardBox v-if="lc" class="mb-6">

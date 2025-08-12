@@ -189,3 +189,22 @@ export async function me() {
   if (!res.ok) await handleError(res, 'Failed to fetch profile')
   return res.json()
 }
+
+/**
+ * Redeem a case-sensitive code and return the updated /me payload.
+ * - Requires Authorization bearer token (handled by authFetch).
+ */
+export async function redeemCode(code) {
+  if (MOCK) {
+    // In mock mode we can't actually mutate flags; return current profile.
+    return me()
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/codes/redeem`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  })
+  if (!res.ok) await handleError(res, 'Redeem failed')
+  return res.json()
+}

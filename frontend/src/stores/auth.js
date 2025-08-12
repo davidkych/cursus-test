@@ -254,6 +254,21 @@ export const useAuth = defineStore('auth', () => {
     syncMainStoreUser(user.value)
   }
 
+  /** ⟨NEW⟩ Convenience: refresh current user from /me and update store. */
+  async function refresh() {
+    try {
+      const u = await apiMe()
+      user.value = u
+      syncMainStoreUser(user.value)
+    } catch {
+      // If session expired, clear local auth state and bubble up
+      token.value = null
+      writeToken(null)
+      user.value = null
+      throw new Error('Session expired')
+    }
+  }
+
   function logout() {
     token.value = null
     user.value  = null
@@ -277,5 +292,6 @@ export const useAuth = defineStore('auth', () => {
     login,
     logout,
     setUser,
+    refresh, // ⟨NEW⟩
   }
 })

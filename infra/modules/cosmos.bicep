@@ -77,7 +77,7 @@ resource jsonContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // ---------------------------------------------------------------------------
-// ✨ NEW: Users container (shared RU/s)
+/* ✨ Users container (shared RU/s) */
 // ---------------------------------------------------------------------------
 resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
   parent: cosmosDb
@@ -98,6 +98,32 @@ resource usersContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/cont
       }
     }
     options: {}                  // inherit DB throughput (cheapest)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ✨ NEW: Codes container (shared RU/s)
+// - PK: /code (also used as the document id)
+// - Unique key on /code (global uniqueness, case-sensitive)
+// ---------------------------------------------------------------------------
+resource codesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2021-04-15' = {
+  parent: cosmosDb
+  name:   'codes'
+  properties: {
+    resource: {
+      id: 'codes'
+      partitionKey: {
+        paths: [ '/code' ]
+        kind:  'Hash'
+      }
+      uniqueKeyPolicy: {
+        uniqueKeys: [
+          { paths: [ '/code' ] }
+        ]
+      }
+      // Default indexing is sufficient; no complex queries expected.
+    }
+    options: {}                  // inherit DB throughput
   }
 }
 

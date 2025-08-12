@@ -76,6 +76,8 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
+        // ✨ NEW: Codes container name (kept configurable via app settings)
+        { name: 'CODES_CONTAINER',                      value: 'codes' }
 
         // Scheduler wiring
         { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
