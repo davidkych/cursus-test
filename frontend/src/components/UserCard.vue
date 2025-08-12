@@ -2,7 +2,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
-import { useAuth } from '@/stores/auth.js'                 /* ⟨NEW⟩ */
+import { useAuth } from '@/stores/auth.js'
 import { mdiCheckDecagram } from '@mdi/js'
 import BaseLevel from '@/components/BaseLevel.vue'
 import UserAvatarCurrentUser from '@/components/UserAvatarCurrentUser.vue'
@@ -36,6 +36,10 @@ function timeAgo(iso) {
   return `${d} days`
 }
 const lastLoginAgo = computed(() => timeAgo(lastLoginIso.value))
+
+/* ────────────────────── Account status flags ────────────────────── */
+const isAdmin = computed(() => !!auth.user?.is_admin)
+const isPremium = computed(() => !!auth.user?.is_premium_member)
 </script>
 
 <template>
@@ -56,15 +60,31 @@ const lastLoginAgo = computed(() => timeAgo(lastLoginIso.value))
           Howdy, <b>{{ userName }}</b>!
         </h1>
 
-        <!-- ⟨UPDATED⟩ use the same telemetry as the details panel -->
+        <!-- Keep the telemetry line unchanged -->
         <p v-if="lastLoginIso || ip">
           Last login
           <b>{{ lastLoginAgo || '—' }}</b>
           <template v-if="ip"> from <b>{{ ip }}</b></template>
         </p>
 
-        <div class="flex justify-center md:block">
-          <PillTag label="Verified" color="info" :icon="mdiCheckDecagram" />
+        <!-- Replace old 'Verified' pill with conditional status badges -->
+        <div v-if="isAdmin || isPremium" class="flex justify-center md:block">
+          <div class="inline-flex items-center space-x-2">
+            <!-- Admin first (green) -->
+            <PillTag
+              v-if="isAdmin"
+              label="Admin"
+              color="success"
+              :icon="mdiCheckDecagram"
+            />
+            <!-- Premium second (blue; previously 'Verified') -->
+            <PillTag
+              v-if="isPremium"
+              label="Premium User"
+              color="info"
+              :icon="mdiCheckDecagram"
+            />
+          </div>
         </div>
       </div>
     </BaseLevel>
