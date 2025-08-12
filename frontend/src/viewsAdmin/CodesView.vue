@@ -32,7 +32,8 @@ const loadingFunctions = ref(false)
 const errorFunctions = ref('')
 
 const form = reactive({
-  type: 'oneoff',         // 'oneoff' | 'reusable' | 'single'
+  // NOTE: FormControl(select) may bind either a string id or an {id,label} object.
+  type: 'oneoff',         // 'oneoff' | 'reusable' | 'single' (or option object)
   functionKey: '',
   expiresLocal: '',       // HTML datetime-local value (blank by default)
   count: 10,              // only for oneoff
@@ -49,6 +50,11 @@ const hasRows = computed(() => rows.value.length > 0)
 const selectedFunction = computed(() =>
   functions.value.find(f => f.key === form.functionKey) || null,
 )
+
+/* Resolve current type id regardless of how the select binds (string or object) */
+const selectedTypeId = computed(() => {
+  return typeof form.type === 'string' ? form.type : (form.type && form.type.id) || ''
+})
 
 /* ─────────────────────── lifecycle/loaders ─────────────────────── */
 onMounted(async () => {
@@ -144,7 +150,10 @@ async function onSubmit() {
     submitError.value = 'Expiry must be in the future'
     return
   }
-  if (form.type === 'oneoff') {
+
+  const typeId = selectedTypeId.value
+
+  if (typeId === 'oneoff') {
     if (!form.count || form.count < 1) {
       submitError.value = 'Count must be at least 1'
       return
@@ -159,7 +168,7 @@ async function onSubmit() {
   submitting.value = true
   try {
     let result
-    if (form.type === 'oneoff') {
+    if (typeId === 'oneoff') {
       result = await generateOneOff({
         function: form.functionKey,
         expires_at: iso,
@@ -173,8 +182,8 @@ async function onSubmit() {
         expires_at: it.expires_at,
         created_at: it.created_at,
       }))
-      rows.value = mapped.concat(rows.value)     // prepend latest at top by simple concat
-    } else if (form.type === 'reusable') {
+      rows.value = mapped.concat(rows.value)     // prepend latest
+    } else if (typeId === 'reusable') {
       result = await generateReusable({
         code: form.code.trim(),
         function: form.functionKey,
@@ -188,7 +197,7 @@ async function onSubmit() {
         created_at: result.created_at,
       }
       rows.value = [row, ...rows.value]
-    } else if (form.type === 'single') {
+    } else if (typeId === 'single') {
       result = await generateSingle({
         code: form.code.trim(),
         function: form.functionKey,
@@ -291,7 +300,7 @@ function downloadAllCsv() {
             />
           </FormField>
 
-          <template v-if="form.type === 'oneoff'">
+          <template v-if="selectedTypeId === 'oneoff'">
             <FormField label="Count" help="How many codes to generate (server enforces limits)">
               <FormControl
                 v-model.number="form.count"
