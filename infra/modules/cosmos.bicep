@@ -134,3 +134,4 @@ output cosmosAccountName string = cosmos.name
 output cosmosEndpoint    string = cosmos.properties.documentEndpoint
 output databaseName      string = 'cursus-test1db'
 output containerName     string = 'jsonContainer'
+ 
