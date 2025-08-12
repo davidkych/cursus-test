@@ -45,8 +45,20 @@ const submitError = ref('')
 const rows = ref([])
 
 const hasRows = computed(() => rows.value.length > 0)
+
+/* Normalize the selected function to a plain key string (handles object vs string bindings). */
+const selectedFunctionKey = computed(() => {
+  const v = form.functionKey
+  if (typeof v === 'string') return v.trim()
+  if (v && typeof v === 'object') {
+    const cand = v.id ?? v.key ?? ''
+    return typeof cand === 'string' ? cand.trim() : ''
+  }
+  return ''
+})
+
 const selectedFunction = computed(() =>
-  functions.value.find(f => f.key === form.functionKey) || null,
+  functions.value.find(f => f.key === selectedFunctionKey.value) || null,
 )
 
 /* Resolve current type id regardless of how the select binds (string or object) */
@@ -161,7 +173,7 @@ function downloadCsv(filename, csvText) {
 /* ───────────────────────── actions ───────────────────────── */
 async function onSubmit() {
   submitError.value = ''
-  if (!form.functionKey) {
+  if (!selectedFunctionKey.value) {
     submitError.value = 'Please select a function'
     return
   }
@@ -177,6 +189,7 @@ async function onSubmit() {
   }
 
   const typeId = selectedTypeId.value
+  const fnKey  = selectedFunctionKey.value
 
   if (typeId === 'oneoff') {
     if (!form.count || Number(form.count) < 1) {
@@ -195,7 +208,7 @@ async function onSubmit() {
     let result
     if (typeId === 'oneoff') {
       result = await generateOneOff({
-        function: form.functionKey,
+        function: fnKey,
         expires_at: iso,
         count: Number(form.count),
       })
@@ -211,7 +224,7 @@ async function onSubmit() {
     } else if (typeId === 'reusable') {
       result = await generateReusable({
         code: form.code.trim(),
-        function: form.functionKey,
+        function: fnKey,
         expires_at: iso,
       })
       const row = {
@@ -225,7 +238,7 @@ async function onSubmit() {
     } else if (typeId === 'single') {
       result = await generateSingle({
         code: form.code.trim(),
-        function: form.functionKey,
+        function: fnKey,
         expires_at: iso,
       })
       const row = {
