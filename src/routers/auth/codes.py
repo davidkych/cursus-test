@@ -43,7 +43,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Literal, Any, Dict
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-import os, datetime, secrets, string, jwt
+import os, re, datetime, secrets, string, jwt
 
 # Single source of truth for functions + UI metadata
 from .common import FUNCTION_REGISTRY, FUNCTION_METADATA, apply_function, apply_default_user_flags
@@ -75,25 +75,36 @@ def _iso(dt: datetime.datetime) -> str:
 def _parse_expiry(value: str) -> datetime.datetime:
     """
     Accepts 'YYYY-MM-DD' or full ISO; returns a UTC *end-of-day* when only a date is given.
-    Raises 422 on invalid formats.
+    Tolerates >6 fractional seconds by trimming (Python 3.9 limit). Raises 422 on invalid formats.
     """
     if not value or not isinstance(value, str):
         raise HTTPException(status_code=422, detail="expires_at must be a string (YYYY-MM-DD or ISO)")
+
+    # Try pure date first -> end of day UTC
     try:
-        # Try pure date first
         d = datetime.date.fromisoformat(value)
-        # Interpret as end-of-day UTC
         return datetime.datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=datetime.timezone.utc)
     except ValueError:
         pass
+
+    # Normalize ISO datetime
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+
+    # Trim fractional seconds to <= 6 digits (handles both offset and naive forms)
+    # e.g., 2025-08-12T12:34:56.123456789+00:00 -> .123456+00:00
+    s = re.sub(r'(\.\d{1,6})\d+(?=[+-]\d{2}:\d{2}$)', r'\1', s)  # with timezone offset
+    s = re.sub(r'(\.\d{1,6})\d+$', r'\1', s)                    # naive (no offset)
+
     try:
-        # Try full datetime
-        dt = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.datetime.fromisoformat(s)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         return dt.astimezone(datetime.timezone.utc)
     except ValueError:
         raise HTTPException(status_code=422, detail="expires_at must be ISO date or datetime")
+
 
 def _require_future(dt: datetime.datetime) -> None:
     if dt <= _now_utc():
