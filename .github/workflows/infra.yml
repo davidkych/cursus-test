@@ -27,6 +27,20 @@ on:
       static_site:
         description: 'Static Web App name'
         value: ${{ jobs.provision.outputs.static_site }}
+      # ⟨NEW⟩ expose scheduler storage account name (for reference)
+      sched_storage:
+        description: 'Scheduler Function storage account name'
+        value: ${{ jobs.provision.outputs.sched_storage }}
+      # ⟨NEW⟩ avatars storage outputs
+      avatars_account:
+        description: 'Avatars Storage Account name'
+        value: ${{ jobs.provision.outputs.avatars_account }}
+      avatars_container:
+        description: 'Avatars blob container name'
+        value: ${{ jobs.provision.outputs.avatars_container }}
+      avatars_public_base:
+        description: 'Public base URL for avatars'
+        value: ${{ jobs.provision.outputs.avatars_public_base }}
 
 jobs:
   provision:
@@ -35,11 +49,16 @@ jobs:
       PREFIX: ${{ inputs.PREFIX }}
       RG:     ${{ inputs.PREFIX }}-rg
     outputs:
-      rg:          ${{ env.RG }}
-      app:         ${{ steps.infra.outputs.app }}
-      cosmos:      ${{ steps.infra.outputs.cosmos }}
-      sched_func:  ${{ steps.infra.outputs.sched_func }}
-      static_site: ${{ steps.infra.outputs.static_site }}
+      rg:                   ${{ env.RG }}
+      app:                  ${{ steps.infra.outputs.app }}
+      cosmos:               ${{ steps.infra.outputs.cosmos }}
+      sched_func:           ${{ steps.infra.outputs.sched_func }}
+      static_site:          ${{ steps.infra.outputs.static_site }}
+      # ⟨NEW⟩
+      sched_storage:        ${{ steps.infra.outputs.sched_storage }}
+      avatars_account:      ${{ steps.infra.outputs.avatars_account }}
+      avatars_container:    ${{ steps.infra.outputs.avatars_container }}
+      avatars_public_base:  ${{ steps.infra.outputs.avatars_public_base }}
 
     steps:
       - uses: actions/checkout@v3
@@ -117,6 +136,7 @@ jobs:
               aadTenantId=${{ steps.aad.outputs.tenant_id }} \
               aadClientId=${{ steps.aad.outputs.client_id }}
 
+          # Existing outputs
           COSMOS=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.cosmosAccountName.value" -o tsv)
           SCHED=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
@@ -126,9 +146,26 @@ jobs:
           APP=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.webAppName.value" -o tsv)
 
-          echo "cosmos=$COSMOS"      >> $GITHUB_OUTPUT
-          echo "sched_func=$SCHED"   >> $GITHUB_OUTPUT
-          echo "static_site=$STATIC" >> $GITHUB_OUTPUT
-          echo "app=$APP"            >> $GITHUB_OUTPUT
+          # ⟨NEW⟩ capture scheduler storage (if exposed by Bicep outputs)
+          SCHED_STORAGE=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
+                            --query "properties.outputs.schedulerStorageName.value" -o tsv)
+
+          # ⟨NEW⟩ avatars storage outputs
+          AVA_ACCOUNT=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
+                          --query "properties.outputs.avatarsAccountNameOut.value" -o tsv)
+          AVA_CONTAINER=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
+                          --query "properties.outputs.avatarsContainerName.value" -o tsv)
+          AVA_PUBLIC=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
+                          --query "properties.outputs.avatarsPublicEndpoint.value" -o tsv)
+
+          echo "cosmos=$COSMOS"             >> $GITHUB_OUTPUT
+          echo "sched_func=$SCHED"          >> $GITHUB_OUTPUT
+          echo "static_site=$STATIC"        >> $GITHUB_OUTPUT
+          echo "app=$APP"                   >> $GITHUB_OUTPUT
+          echo "sched_storage=$SCHED_STORAGE"           >> $GITHUB_OUTPUT
+          echo "avatars_account=$AVA_ACCOUNT"          >> $GITHUB_OUTPUT
+          echo "avatars_container=$AVA_CONTAINER"      >> $GITHUB_OUTPUT
+          echo "avatars_public_base=$AVA_PUBLIC"       >> $GITHUB_OUTPUT
 
           echo "🏗 infra ready – rg=$RG, app=$APP, cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"
+          echo "🖼 avatars – account=$AVA_ACCOUNT, container=$AVA_CONTAINER"

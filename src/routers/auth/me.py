@@ -43,6 +43,8 @@ class UserMeOut(BaseModel):
     country: Optional[str] = None
     profile_pic_id: Optional[int] = 1
     profile_pic_type: Optional[Literal["default", "custom"]] = "default"
+    # ⟨NEW⟩ when custom avatar is set the server returns a direct URL
+    profile_pic_url: Optional[str] = None
 
     # ⟨NEW⟩ account flags (default False for backward compatibility)
     is_admin: bool = False
@@ -116,6 +118,8 @@ def me(request: Request):
         "country":          doc.get("country"),
         "profile_pic_id":   int(doc.get("profile_pic_id", 1)),
         "profile_pic_type": doc.get("profile_pic_type", "default"),
+        # ⟨NEW⟩ include direct URL when custom avatar present
+        "profile_pic_url":  doc.get("profile_pic_url"),
         # ⟨NEW⟩ flags included in response (default False)
         "is_admin":          bool(doc.get("is_admin", False)),
         "is_premium_member": bool(doc.get("is_premium_member", False)),

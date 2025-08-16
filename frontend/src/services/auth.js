@@ -155,7 +155,9 @@ export async function login(payload) {
  *   is_admin: boolean,
  *   is_premium_member: boolean,
  *   // NEW (optional):
- *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
+ *   login_context: { last_login_utc, ip, ua, locale, timezone, geo },
+ *   // NEW (optional):
+ *   profile_pic_url: string | null
  * }
  */
 export async function me() {
@@ -182,6 +184,7 @@ export async function me() {
         timezone: 'Europe/London',
         geo: { country_iso2: 'GB', source: 'mock' },
       },
+      profile_pic_url: null,
     })
   }
 
@@ -206,5 +209,39 @@ export async function redeemCode(code) {
     body: JSON.stringify({ code }),
   })
   if (!res.ok) await handleError(res, 'Redeem failed')
+  return res.json()
+}
+
+/**
+ * ⟨NEW⟩ Upload a custom avatar for the current user.
+ * - Sends multipart/form-data to /api/auth/avatar
+ * - Returns the updated /me payload (including profile_pic_url and profile_pic_type="custom")
+ */
+export async function uploadAvatar(file) {
+  if (!file) throw new Error('No file provided')
+
+  if (MOCK) {
+    // Dev-only: emulate server response by augmenting current /me with a blob URL
+    const base = await me()
+    try {
+      const objectUrl = URL.createObjectURL(file)
+      return {
+        ...base,
+        profile_pic_type: 'custom',
+        profile_pic_url: objectUrl,
+      }
+    } catch {
+      return base
+    }
+  }
+
+  const form = new FormData()
+  form.append('file', file, file.name)
+
+  const res = await authFetch(`${API_BASE}/api/auth/avatar`, {
+    method: 'POST',
+    body: form, // do NOT set Content-Type; browser sets multipart boundary
+  })
+  if (!res.ok) await handleError(res, 'Avatar upload failed')
   return res.json()
 }

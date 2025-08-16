@@ -27,7 +27,13 @@ var schedFuncName  = '${prefix}-sched'
 var staticSiteName = '${prefix}-web'
 
 // Keep it globally unique & compliant: lower, no dashes + short unique suffix
-var mapsAccountName = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+var sanitizedPrefix   = toLower(replace(prefix, '-', ''))
+var mapsAccountName   = '${sanitizedPrefix}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+
+// ⟨NEW⟩ Dedicated Avatars storage account name (≤24 chars, lowercase, unique)
+var avatarsAccountName = length(sanitizedPrefix) > 14
+  ? '${substring(sanitizedPrefix, 0, 14)}ava${substring(uniqueString(resourceGroup().id), 0, 6)}'
+  : '${sanitizedPrefix}ava${substring(uniqueString(resourceGroup().id), 0, 6)}'
 
 // 1) App-Service Plan --------------------------------------------------------
 module planModule './modules/plan.bicep' = {
@@ -106,6 +112,19 @@ module staticWebModule './modules/staticweb.bicep' = {
   }
 }
 
+// 7) ⟨NEW⟩ Avatars Storage (separate account) --------------------------------
+module avatarsModule './modules/avatars.bicep' = {
+  name: 'avatars'
+  params: {
+    location:           location
+    avatarsAccountName: avatarsAccountName
+    // containerName defaults to "avatars" inside the module
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Outputs
+// ────────────────────────────────────────────────────────────────────────────
 output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
@@ -113,3 +132,8 @@ output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
 output staticSiteName        string = staticWebModule.outputs.staticSiteName
 output webAppName            string = webAppModule.outputs.webAppName    // ← existing
 output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
+
+// ⟨NEW⟩ Avatars storage outputs
+output avatarsAccountNameOut string = avatarsModule.outputs.avatarsAccountNameOut
+output avatarsContainerName  string = avatarsModule.outputs.avatarsContainerNameOut
+output avatarsPublicEndpoint string = avatarsModule.outputs.avatarsPrimaryEndpoint
