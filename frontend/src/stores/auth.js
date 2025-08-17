@@ -1,23 +1,22 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars unless backend provides a short-lived SAS.
+// - Uses only built-in /assets/propics/*.png for avatars.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { login as apiLogin, me as apiMe } from '@/services/auth.js' // ← direct import; no top-level await
-import { useMainStore } from '@/stores/main.js' // ← keep top-bar name in sync
+import { login as apiLogin, me as apiMe } from '@/services/auth.js'  // ← direct import; no top-level await
+import { useMainStore } from '@/stores/main.js'                      // ← keep top-bar name in sync
 
 /* ─────────────────────────── constants ─────────────────────────── */
 const TOKEN_KEY = 'auth.token'
-const MOCK = import.meta.env?.VITE_AUTH_MOCK === '1'
+const MOCK      = import.meta.env?.VITE_AUTH_MOCK === '1'
 
 /* ───────────────────────── avatar catalog ─────────────────────────
-Build a { [id:number]: url } map from /assets/propics/*.png at build time
-(eager + treeshakeable with Vite).
-*/
+   Build a { [id:number]: url } map from /assets/propics/*.png
+   at build time (eager + treeshakeable with Vite). */
 const avatarFiles = import.meta.glob('@/assets/propics/*.png', {
   eager: true,
   import: 'default',
@@ -27,6 +26,7 @@ const avatarMap = Object.entries(avatarFiles).reduce((acc, [path, url]) => {
   if (m) acc[Number(m[1])] = url
   return acc
 }, /** @type {Record<number, string>} */ ({}))
+
 const avatarIds = Object.keys(avatarMap)
   .map((n) => Number(n))
   .sort((a, b) => a - b)
@@ -39,6 +39,7 @@ function readToken() {
     return null
   }
 }
+
 function writeToken(token) {
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token)
@@ -48,24 +49,15 @@ function writeToken(token) {
   }
 }
 
-/**
- * Resolve avatar URL for display.
- * - If the user's profile is marked as "custom" and backend provided a short-lived SAS
- *   (`avatar_url` from /me), prefer that URL.
- * - Otherwise fall back to the bundled sprite by numeric `profile_pic_id`.
- */
-function resolveAvatarUrl(profile_pic_id, profile_pic_type, avatar_url) {
-  if (profile_pic_type === 'custom' && typeof avatar_url === 'string' && avatar_url) {
-    return avatar_url
-  }
-  // Only 'default' supported for bundled sprites
+function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
+  // Only 'default' supported for now
   const id = Number(profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
 }
 
 /** Keep main store's display name & e-mail in sync with the auth user. */
 function syncMainStoreUser(u) {
-  const name = u?.username || ''
+  const name  = u?.username || ''
   const email = u?.email || ''
   try {
     const main = useMainStore()
@@ -79,7 +71,7 @@ function syncMainStoreUser(u) {
 export const useAuth = defineStore('auth', () => {
   // state
   const token = ref(/** @type {string|null} */ (null))
-  const user = ref(
+  const user  = ref(
     /** @type {null | {
       id?: string
       username?: string
@@ -90,7 +82,6 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
-      avatar_url?: string               // ⟨NEW⟩ short-lived SAS from /me (optional)
       // ⟨NEW⟩ account flags
       is_admin?: boolean
       is_premium_member?: boolean
@@ -117,13 +108,9 @@ export const useAuth = defineStore('auth', () => {
 
   // getters
   const isAuthenticated = computed(() => !!token.value)
-  const displayName = computed(() => user.value?.username || '')
-  const avatarUrl = computed(() =>
-    resolveAvatarUrl(
-      user.value?.profile_pic_id,
-      user.value?.profile_pic_type,
-      user.value?.avatar_url, // ⟨NEW⟩ prefer SAS if custom
-    ),
+  const displayName     = computed(() => user.value?.username || '')
+  const avatarUrl       = computed(() =>
+    resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
   )
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
@@ -131,20 +118,24 @@ export const useAuth = defineStore('auth', () => {
     const iso = user.value?.login_context?.last_login_utc
     return iso ? new Date(iso).toISOString() : null
   })
+
   const lastLoginSummary = computed(() => {
     const lc = user.value?.login_context
     if (!lc) return ''
     const parts = []
+
     const browserName = lc.ua?.browser?.name || ''
-    const browserVer = lc.ua?.browser?.version || ''
-    const osName = lc.ua?.os?.name || ''
-    const osVer = lc.ua?.os?.version || ''
-    const country = lc.geo?.country_iso2 || ''
-    const tz = lc.timezone || ''
-    if (browserName) parts.push(browserVer ? ${browserName} ${browserVer} : browserName)
-    if (osName) parts.push(osVer ? ${osName} ${osVer} : osName)
-    if (country) parts.push(country)
-    if (tz) parts.push(tz)
+    const browserVer  = lc.ua?.browser?.version || ''
+    const osName      = lc.ua?.os?.name || ''
+    const osVer       = lc.ua?.os?.version || ''
+    const country     = lc.geo?.country_iso2 || ''
+    const tz          = lc.timezone || ''
+
+    if (browserName) parts.push(browserVer ? `${browserName} ${browserVer}` : browserName)
+    if (osName)      parts.push(osVer ? `${osName} ${osVer}` : osName)
+    if (country)     parts.push(country)
+    if (tz)          parts.push(tz)
+
     return parts.join(' • ')
   })
 
@@ -152,7 +143,6 @@ export const useAuth = defineStore('auth', () => {
   async function init() {
     if (inited.value) return
     token.value = readToken()
-
     if (MOCK) {
       // In mock mode, synthesize a user quickly so UI works without backend.
       if (!token.value) {
@@ -176,7 +166,11 @@ export const useAuth = defineStore('auth', () => {
         login_context: {
           last_login_utc: new Date().toISOString(),
           ip: '203.0.113.42',
-          ua: { browser: { name: 'Mock', version: '0' }, os: { name: 'MockOS', version: '0' }, is_pc: true },
+          ua: {
+            browser: { name: 'Mock', version: '0' },
+            os: { name: 'MockOS', version: '0' },
+            is_pc: true,
+          },
           locale: { client: 'en-GB', accept_language: 'en-GB' },
           timezone: 'Europe/London',
           geo: { country_iso2: 'GB', source: 'mock' },
@@ -215,7 +209,7 @@ export const useAuth = defineStore('auth', () => {
       user.value = {
         id: creds.username,
         username: creds.username,
-        email: ${creds.username}@example.com,
+        email: `${creds.username}@example.com`,
         created: new Date().toISOString(),
         profile_pic_id: 1,
         profile_pic_type: 'default',
@@ -277,7 +271,7 @@ export const useAuth = defineStore('auth', () => {
 
   function logout() {
     token.value = null
-    user.value = null
+    user.value  = null
     writeToken(null)
     // Not resetting main store name here; authenticated layouts usually disappear after logout.
   }
@@ -298,7 +292,6 @@ export const useAuth = defineStore('auth', () => {
     login,
     logout,
     setUser,
-    refresh,
-    // ⟨NEW⟩
+    refresh, // ⟨NEW⟩
   }
 })
