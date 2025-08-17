@@ -49,29 +49,19 @@ param loginTelemetry string = '1'
 ])
 param geoipProvider string = 'azmaps'
 
-// ⟨NEW⟩ Images storage wiring (optional; empty IMAGES_ACCOUNT disables custom uploads at runtime)
-@description('Images Storage Account name (for avatars). Leave empty to disable image features.')
-param imagesAccountName string = ''
-
-@description('Images container name (default "avatars")')
-@minLength(3)
-param imagesContainerName string = 'avatars'
-
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
 var schedulerBaseUrl = 'https://${schedFuncName}.azurewebsites.net'
 
 // ---------------------------------------------------------------------------
-// App Service (Linux)
+// App Service (Linux)  -------------------------------------------------------
 // ---------------------------------------------------------------------------
 resource app 'Microsoft.Web/sites@2023-01-01' = {
   name: appName
   location: location
   kind: 'app,linux'
-  identity: {
-    type: 'SystemAssigned'
-  }
+  identity: { type: 'SystemAssigned' }
   properties: {
     serverFarmId: planId
     siteConfig: {
@@ -79,77 +69,31 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
       appCommandLine: 'gunicorn --log-level info --worker-class uvicorn.workers.UvicornWorker --workers 2 --bind 0.0.0.0:8000 main:app'
       healthCheckPath: '/healthz'
       appSettings: [
-        // Core runtime
-        {
-          name: 'WEBSITES_PORT'
-          value: '8000'
-        }
-        {
-          name: 'WEBSITES_CONTAINER_START_TIME_LIMIT'
-          value: string(timeout)
-        }
+        { name: 'WEBSITES_PORT',                       value: '8000' }
+        { name: 'WEBSITES_CONTAINER_START_TIME_LIMIT', value: string(timeout) }
 
         // Cosmos wiring
-        {
-          name: 'COSMOS_ENDPOINT'
-          value: cosmosEndpoint
-        }
-        {
-          name: 'COSMOS_DATABASE'
-          value: databaseName
-        }
-        {
-          name: 'COSMOS_CONTAINER'
-          value: containerName
-        }
-
-        // ✨ Codes container name (kept configurable via app settings)
-        {
-          name: 'CODES_CONTAINER'
-          value: 'codes'
-        }
+        { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
+        { name: 'COSMOS_DATABASE',                     value: databaseName }
+        { name: 'COSMOS_CONTAINER',                    value: containerName }
+        // ✨ NEW: Codes container name (kept configurable via app settings)
+        { name: 'CODES_CONTAINER',                      value: 'codes' }
 
         // Scheduler wiring
-        {
-          name: 'SCHEDULER_BASE_URL'
-          value: schedulerBaseUrl
-        }
-        {
-          name: 'SCHEDULER_FUNCTION_NAME'
-          value: schedFuncName
-        }
+        { name: 'SCHEDULER_BASE_URL',                  value: schedulerBaseUrl }
+        { name: 'SCHEDULER_FUNCTION_NAME',             value: schedFuncName }
 
         // ⟨NEW⟩ Telemetry wiring (safe defaults; empty values are fine)
-        {
-          name: 'LOGIN_TELEMETRY'
-          value: loginTelemetry
-        }
-        {
-          name: 'GEOIP_PROVIDER'
-          value: geoipProvider
-        }
-        {
-          name: 'AZURE_MAPS_KEY'
-          value: azureMapsKey
-        }
-
-        // ⟨NEW⟩ Images wiring (optional)
-        // If imagesAccountName is empty, backend can treat custom avatar upload as disabled.
-        {
-          name: 'IMAGES_ACCOUNT'
-          value: imagesAccountName
-        }
-        {
-          name: 'IMAGES_CONTAINER'
-          value: imagesContainerName
-        }
+        { name: 'LOGIN_TELEMETRY',                     value: loginTelemetry }
+        { name: 'GEOIP_PROVIDER',                      value: geoipProvider }
+        { name: 'AZURE_MAPS_KEY',                      value: azureMapsKey }
       ]
     }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Easy Auth v2 (allows anonymous; enables AAD sign-in)
+// Easy Auth v2  (allows anonymous; enables AAD sign-in) -----------------------
 // ---------------------------------------------------------------------------
 resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
   name: '${app.name}/authsettingsV2'
@@ -177,9 +121,4 @@ resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Outputs
-// ---------------------------------------------------------------------------
 output webAppName string = app.name
-// ⟨NEW⟩ Handy for RBAC via parent (already used in main, but keeping this for diagnostics/future)
-output webAppPrincipalId string = app.identity.principalId
