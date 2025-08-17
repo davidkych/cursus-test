@@ -2,8 +2,8 @@
 <script setup>
 import { reactive, computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
-import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
-import { redeemCode as apiRedeemCode } from '@/services/auth.js' /* ⟨NEW⟩ */
+import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ already used */
+import { redeemCode as apiRedeemCode, uploadAvatar as apiUploadAvatar } from '@/services/auth.js' /* ⟨NEW⟩ */
 import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
@@ -16,6 +16,7 @@ import BaseButtons from '@/components/BaseButtons.vue'
 import UserCard from '@/components/UserCard.vue'
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
+import UserAvatarCurrentUser from '@/components/UserAvatarCurrentUser.vue'      /* ⟨NEW⟩ */
 
 const mainStore = useMainStore()
 
@@ -47,6 +48,65 @@ const lastLogin = computed(() => {
   return iso ? new Date(iso).toLocaleString() : ''
 })
 
+/* ⟨NEW⟩ Upload eligibility & UI state */
+const isAdmin   = computed(() => !!auth.user?.is_admin)
+const isPremium = computed(() => !!auth.user?.is_premium_member)
+const canUpload = computed(() => isAdmin.value || isPremium.value)
+
+const avatarLoading = ref(false)
+const avatarError   = ref('')
+const avatarSuccess = ref('')
+
+const ACCEPT_PREMIUM = 'image/jpeg,image/jpg,image/png'
+const MAX_PREMIUM    = 512 * 1024
+const acceptAttr     = computed(() => (isAdmin.value ? 'image/*' : ACCEPT_PREMIUM))
+
+async function handleAvatarChange(e) {
+  avatarError.value = ''
+  avatarSuccess.value = ''
+
+  // Derive the File from various emitter shapes
+  let file = null
+  if (e?.target?.files?.length) file = e.target.files[0]
+  else if (e?.files?.length) file = e.files[0]
+  else if (Array.isArray(e) && e[0]) file = e[0]
+  else if (e instanceof File) file = e
+
+  if (!file) {
+    avatarError.value = 'No file selected'
+    return
+  }
+  if (!canUpload.value) {
+    avatarError.value = 'Premium membership required to upload an avatar'
+    return
+  }
+
+  if (!isAdmin.value) {
+    const typeOk = /^(image\/jpeg|image\/jpg|image\/png)$/i.test(file.type)
+    const sizeOk = file.size <= MAX_PREMIUM
+    if (!typeOk) { avatarError.value = 'Only JPG/PNG allowed for premium users'; return }
+    if (!sizeOk) { avatarError.value = 'Max file size is 512 KB'; return }
+  } else {
+    // Admin: any image type, no size limit — light guard to avoid obvious non-images
+    if (file.type && !file.type.startsWith('image/')) {
+      avatarError.value = 'Unsupported file type (expecting an image)'
+      return
+    }
+  }
+
+  avatarLoading.value = true
+  try {
+    await apiUploadAvatar(file)
+    await auth.refresh()            // pull fresh /me with new short-lived SAS URL
+    avatarSuccess.value = 'Avatar updated.'
+  } catch (err) {
+    avatarError.value = err?.message || 'Upload failed'
+  } finally {
+    avatarLoading.value = false
+  }
+}
+
+/* ────────────────────────── existing profile forms ────────────────────────── */
 const profileForm = reactive({
   name: mainStore.userName,
   email: mainStore.userEmail,
@@ -162,8 +222,38 @@ const submitRedeem = async () => {
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <CardBox is-form @submit.prevent="submitProfile">
-          <FormField label="Avatar" help="Max 500kb">
-            <FormFilePicker label="Upload" />
+          <!-- ⟨UPDATED⟩ Avatar box: show current avatar + upload controls -->
+          <FormField
+            label="Avatar"
+            :help="isAdmin ? 'Admins: any image type, no size limit' : (isPremium ? 'JPG/PNG only, under 512 KB' : 'Premium required to upload a custom avatar')"
+          >
+            <!-- current avatar preview (short-lived SAS used automatically via store) -->
+            <div class="mb-3 flex items-center space-x-4">
+              <UserAvatarCurrentUser class="w-16 h-16 overflow-hidden rounded-full" />
+              <div class="text-sm text-gray-600 dark:text-gray-300">
+                <div class="font-medium">Current avatar</div>
+                <div v-if="!canUpload" class="text-red-600">Upload locked (Premium required)</div>
+                <div v-else-if="isAdmin" class="text-green-700">Admin: upload any image</div>
+                <div v-else class="text-gray-500">Premium: JPG/PNG · &lt; 512 KB</div>
+              </div>
+            </div>
+
+            <!-- file picker (re-using existing component) -->
+            <FormFilePicker
+              label="Upload"
+              name="avatar"
+              :accept="acceptAttr"
+              :disabled="!canUpload || avatarLoading"
+              @change="handleAvatarChange"
+            />
+
+            <!-- messages -->
+            <div v-if="avatarError" class="mt-2 text-sm text-red-600">
+              {{ avatarError }}
+            </div>
+            <div v-if="avatarSuccess && !avatarError" class="mt-2 text-sm text-green-600">
+              {{ avatarSuccess }}
+            </div>
           </FormField>
 
           <FormField label="Name" help="Required. Your name">

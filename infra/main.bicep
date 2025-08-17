@@ -26,8 +26,9 @@ var appName        = '${prefix}-app'
 var schedFuncName  = '${prefix}-sched'
 var staticSiteName = '${prefix}-web'
 
-// Keep it globally unique & compliant: lower, no dashes + short unique suffix
-var mapsAccountName = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+// Keep these globally unique & compliant
+var mapsAccountName   = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+var imagesAccountName = '${toLower(replace(prefix, '-', ''))}img${substring(uniqueString(resourceGroup().id), 0, 6)}'
 
 // 1) App-Service Plan --------------------------------------------------------
 module planModule './modules/plan.bicep' = {
@@ -46,7 +47,6 @@ module cosmosModule './modules/cosmos.bicep' = {
     location: location
     appName:  appName
   }
-  dependsOn: [ planModule ]
 }
 
 // 3) Azure Maps (Gen2)  ------------------------------------------------------
@@ -62,8 +62,9 @@ module mapsModule './modules/maps.bicep' = {
 module imagesModule './modules/images.bicep' = {
   name: 'images'
   params: {
-    prefix:   prefix
-    location: location
+    prefix:            prefix
+    location:          location
+    imagesAccountName: imagesAccountName   // ← pass known-at-start name
   }
 }
 
@@ -82,19 +83,17 @@ module webAppModule './modules/webapp.bicep' = {
     aadTenantId:    aadTenantId
     aadClientId:    aadClientId
 
-    // ⟨NEW⟩ Pipe Azure Maps primary key into app settings
+    // Telemetry / Maps
     azureMapsKey:   mapsModule.outputs.mapsPrimaryKey
-    // Optional: set defaults here so single deployment is enough
     loginTelemetry: '1'
     geoipProvider:  'azmaps'
 
-    // ⟨NEW⟩ Image storage wiring for avatars
-    imagesAccountName: imagesModule.outputs.imagesAccountNameOut
+    // ⟨NEW⟩ Image storage wiring for avatars (avoid module outputs here)
+    imagesAccountName: imagesAccountName
     avatarContainer:   imagesModule.outputs.avatarsContainerNameOut
     avatarBasePath:    'users'
     avatarSasTtlMinutes: 5
   }
-  dependsOn: [ cosmosModule, planModule, mapsModule, imagesModule ]
 }
 
 // 6) Durable Scheduler -------------------------------------------------------
@@ -109,7 +108,6 @@ module schedulerModule './modules/scheduler.bicep' = {
     containerName:         cosmosModule.outputs.containerName
     appName:               appName
   }
-  dependsOn: [ cosmosModule, planModule ]
 }
 
 // 7) Static Web-App (Vue frontend) ------------------------------------------
@@ -122,42 +120,6 @@ module staticWebModule './modules/staticweb.bicep' = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RBAC: grant Web-App MSI access to images storage (data-plane + SAS minting)
-// - Storage Blob Data Contributor (read/write blobs)
-// - Storage Blob Delegator (request user delegation keys for SAS)
-// ─────────────────────────────────────────────────────────────────────────────
-
-// existing handle for the images storage account (for role scopes)
-resource imagesAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
-  name: imagesModule.outputs.imagesAccountNameOut
-}
-
-// Role definition IDs (built-in):
-// Storage Blob Data Contributor: ba92f5b4-2d11-453d-a403-e96b0029c9fe
-// Storage Blob Delegator:       db58b8e5-c6ad-4a2a-8342-4190687cbf4a
-resource roleBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(imagesAccount.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe', webAppModule.outputs.webAppPrincipalId)
-  scope: imagesAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-    principalId:      webAppModule.outputs.webAppPrincipalId
-    principalType:    'ServicePrincipal'
-  }
-  dependsOn: [ imagesModule, webAppModule ]
-}
-
-resource roleBlobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(imagesAccount.id, 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a', webAppModule.outputs.webAppPrincipalId)
-  scope: imagesAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')
-    principalId:      webAppModule.outputs.webAppPrincipalId
-    principalType:    'ServicePrincipal'
-  }
-  dependsOn: [ imagesModule, webAppModule ]
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Outputs
 // ─────────────────────────────────────────────────────────────────────────────
 output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
@@ -165,6 +127,6 @@ output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionN
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
 output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
 output staticSiteName        string = staticWebModule.outputs.staticSiteName
-output webAppName            string = webAppModule.outputs.webAppName    // ← existing
-output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
-output imagesAccountName     string = imagesModule.outputs.imagesAccountNameOut // ← NEW (non-secret)
+output webAppName            string = webAppModule.outputs.webAppName
+output mapsAccountName       string = mapsAccountName
+output imagesAccountName     string = imagesAccountName

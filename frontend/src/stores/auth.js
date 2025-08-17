@@ -1,7 +1,8 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars.
+// - Uses only built-in /assets/propics/*.png for avatars by default, but
+//   prefers backend-provided short-lived SAS URL when profile_pic_type==='custom'.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
@@ -49,8 +50,16 @@ function writeToken(token) {
   }
 }
 
-function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
-  // Only 'default' supported for now
+/**
+ * Resolve the avatar URL for the current user.
+ * - If user has a custom avatar and the backend returned a short-lived SAS URL,
+ *   prefer that (fresh on every /me).
+ * - Otherwise fall back to the bundled gallery image by numeric id.
+ */
+function resolveAvatarUrl(profile_pic_id, profile_pic_type, avatar_sas_url) {
+  if (profile_pic_type === 'custom' && avatar_sas_url) {
+    return avatar_sas_url
+  }
   const id = Number(profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
 }
@@ -102,6 +111,8 @@ export const useAuth = defineStore('auth', () => {
         timezone?: string
         geo?: { country_iso2?: string, source?: string }
       }
+      // ⟨NEW⟩ Optional short-lived SAS URL for custom avatar
+      avatar_sas_url?: string|null
     }} */ (null),
   )
   const inited = ref(false)
@@ -110,7 +121,11 @@ export const useAuth = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value)
   const displayName     = computed(() => user.value?.username || '')
   const avatarUrl       = computed(() =>
-    resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
+    resolveAvatarUrl(
+      user.value?.profile_pic_id,
+      user.value?.profile_pic_type,
+      user.value?.avatar_sas_url
+    ),
   )
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
@@ -175,6 +190,7 @@ export const useAuth = defineStore('auth', () => {
           timezone: 'Europe/London',
           geo: { country_iso2: 'GB', source: 'mock' },
         },
+        // mock has no avatar_sas_url
       }
       // ensure top-bar picks up the username
       syncMainStoreUser(user.value)

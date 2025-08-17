@@ -5,7 +5,8 @@ import BaseButton from '@/components/BaseButton.vue'
 
 const props = defineProps({
   modelValue: {
-    type: [Object, File, Array],
+    // Single File (default) or Array<File> when multiple=true
+    type: [Object, File, Array, null],
     default: null,
   },
   label: {
@@ -25,61 +26,55 @@ const props = defineProps({
     default: 'info',
   },
   isRoundIcon: Boolean,
+
+  // ⟨NEW⟩
+  name: { type: String, default: null },
+  multiple: { type: Boolean, default: false },
+  disabled: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:modelValue'])
+const emit = defineEmits(['update:modelValue', 'change'])
 
-const root = ref(null)
+const root = ref(null) // native <input type="file">
 
+// Internal mirror of modelValue for filename display
 const file = ref(props.modelValue)
 
-const showFilename = computed(() => !props.isRoundIcon && file.value)
+// Show filename area when not round icon and we have a selection
+const showFilename = computed(() => !props.isRoundIcon && !!file.value)
 
+// Keep internal state in sync with v-model
 const modelValueProp = computed(() => props.modelValue)
-
 watch(modelValueProp, (value) => {
   file.value = value
-
-  if (!value) {
-    root.value.input.value = null
+  if (!value && root.value) {
+    // root is the <input>, not a component
+    root.value.value = null
   }
 })
 
-const upload = (event) => {
-  const value = event.target.files || event.dataTransfer.files
+// Friendly filename text (first file name; indicates "+N more" if multiple)
+const filenameText = computed(() => {
+  const v = file.value
+  if (!v) return ''
+  if (Array.isArray(v)) {
+    if (v.length === 0) return ''
+    return v.length > 1 ? `${v[0]?.name || 'file'} + ${v.length - 1} more` : (v[0]?.name || '')
+  }
+  return v?.name || ''
+})
 
-  file.value = value[0]
+function upload(event) {
+  const list = event?.target?.files || event?.dataTransfer?.files || []
+  const files = Array.from(list)
+
+  // For v-model: single File by default; array of Files when multiple=true
+  file.value = props.multiple ? files : (files[0] || null)
 
   emit('update:modelValue', file.value)
-
-  // Use this as an example for handling file uploads
-  // let formData = new FormData()
-  // formData.append('file', file.value)
-
-  // const mediaStoreRoute = `/your-route/`
-
-  // axios
-  //   .post(mediaStoreRoute, formData, {
-  //     headers: {
-  //       'Content-Type': 'multipart/form-data'
-  //     },
-  //     onUploadProgress: progressEvent
-  //   })
-  //   .then(r => {
-  //
-  //   })
-  //   .catch(err => {
-  //
-  //   })
+  // Also emit a generic change event so callers can hook into it
+  emit('change', event, files)
 }
-
-// const uploadPercent = ref(0)
-//
-// const progressEvent = progressEvent => {
-//   uploadPercent.value = Math.round(
-//     (progressEvent.loaded * 100) / progressEvent.total
-//   )
-// }
 </script>
 
 <template>
@@ -93,13 +88,18 @@ const upload = (event) => {
         :icon="icon"
         :color="color"
         :rounded-full="isRoundIcon"
+        :disabled="disabled"
       />
       <input
         ref="root"
         type="file"
         class="absolute top-0 left-0 w-full h-full opacity-0 outline-hidden cursor-pointer -z-1"
-        :accept="accept"
-        @input="upload"
+        :name="name || undefined"
+        :accept="accept || undefined"
+        :multiple="multiple"
+        :disabled="disabled"
+        @change="upload"
+        @input="upload"  <!-- keep for backward-compat -->
       />
     </label>
     <div
@@ -107,7 +107,7 @@ const upload = (event) => {
       class="px-4 py-2 bg-gray-100 dark:bg-slate-800 border-gray-200 dark:border-slate-700 border rounded-r"
     >
       <span class="text-ellipsis line-clamp-1">
-        {{ file.name }}
+        {{ filenameText }}
       </span>
     </div>
   </div>
