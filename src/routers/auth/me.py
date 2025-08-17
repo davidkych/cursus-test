@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, Literal, Any, Dict
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 import os, datetime, jwt
 
 # ⟨NEW⟩ shared defaults for user flags
@@ -20,6 +21,48 @@ _client = CosmosClient(
     credential=DefaultAzureCredential()
 )
 _users = _client.get_database_client(_database_name).get_container_client(_users_container)
+
+# ───────────────────────── Images Storage (for SAS) ──────────────  ⟨NEW⟩
+_images_account   = os.getenv("IMAGES_ACCOUNT_NAME", "")
+_images_container = os.getenv("IMAGES_CONTAINER", "avatars")
+_images_blob_ep   = os.getenv("IMAGES_BLOB_ENDPOINT") or (f"https://{_images_account}.blob.core.windows.net/" if _images_account else "")
+
+# Normalize endpoint
+if _images_blob_ep and not _images_blob_ep.endswith("/"):
+    _images_blob_ep += "/"
+
+# Blob client (MSI)
+_blob_service: Optional[BlobServiceClient] = None
+if _images_account:
+    _blob_service = BlobServiceClient(
+        account_url=f"https://{_images_account}.blob.core.windows.net",
+        credential=DefaultAzureCredential()
+    )
+
+def _make_read_sas_url(blob_name: str, minutes: int = 60) -> Optional[Dict[str, str]]:
+    """
+    Create a short-lived user-delegation SAS URL to read the avatar blob.
+    Returns None if images storage is not configured.
+    """
+    if not (_blob_service and _images_account and _images_blob_ep):
+        return None
+    now = datetime.datetime.utcnow()
+    start = now - datetime.timedelta(minutes=5)
+    expiry = now + datetime.timedelta(minutes=minutes)
+    udk = _blob_service.get_user_delegation_key(key_start_time=start, key_expiry_time=expiry)
+    sas = generate_blob_sas(
+        account_name=_images_account,
+        container_name=_images_container,
+        blob_name=blob_name,
+        user_delegation_key=udk,
+        permission=BlobSasPermissions(read=True),
+        start=start,
+        expiry=expiry,
+    )
+    return {
+        "url": f"{_images_blob_ep}{_images_container}/{blob_name}?{sas}",
+        "expiresAt": expiry.replace(microsecond=0).isoformat() + "Z",
+    }
 
 # ────────────────────────── Response models ───────────────────────
 class LoginContext(BaseModel):
@@ -50,6 +93,9 @@ class UserMeOut(BaseModel):
 
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
+
+    # ⟨NEW⟩ ephemeral URL to load custom avatar (SAS; omitted if default)
+    avatar_url: Optional[str] = None
 
 # ──────────────────────────── Helpers ────────────────────────────
 def _extract_bearer_token(req: Request) -> str:
@@ -88,9 +134,8 @@ def me(request: Request):
     """
     Current-user profile endpoint.
     Requires: Authorization: Bearer <JWT>  (HS256 signed with JWT_SECRET).
-    Returns extended 'login_context' (latest snapshot) and the new
-    'is_admin' / 'is_premium_member' flags. Missing flags default to False.
-    Opportunistically persists defaults if flags were missing.
+    Returns extended 'login_context' (latest snapshot), new flags,
+    and (if custom avatar exists) a short-lived SAS 'avatar_url'.
     """
     token = _extract_bearer_token(request)
     username = _decode_jwt(token)
@@ -124,6 +169,13 @@ def me(request: Request):
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     if "login_context" in doc and isinstance(doc["login_context"], dict):
         payload["login_context"] = doc["login_context"]
+
+    # ⟨NEW⟩ Provide a short-lived SAS URL if a custom avatar exists
+    if doc.get("profile_pic_type") == "custom" and doc.get("avatar_blob"):
+        sas = _make_read_sas_url(str(doc["avatar_blob"]), minutes=60)
+        if sas:
+            # Cache-bust by appending a unix ts param, while SAS already has its own querystring.
+            payload["avatar_url"] = f'{sas["url"]}&v={int(datetime.datetime.utcnow().timestamp())}'
 
     # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
     if missing_flags:

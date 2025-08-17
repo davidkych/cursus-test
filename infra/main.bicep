@@ -27,7 +27,8 @@ var schedFuncName  = '${prefix}-sched'
 var staticSiteName = '${prefix}-web'
 
 // Keep it globally unique & compliant: lower, no dashes + short unique suffix
-var mapsAccountName = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+var mapsAccountName   = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+var imagesAccountName = '${toLower(replace(prefix, '-', ''))}img${substring(uniqueString(resourceGroup().id), 0, 6)}'
 
 // 1) App-Service Plan --------------------------------------------------------
 module planModule './modules/plan.bicep' = {
@@ -58,7 +59,16 @@ module mapsModule './modules/maps.bicep' = {
   }
 }
 
-// 4) FastAPI Web-App ---------------------------------------------------------
+// 4) Images Storage (private avatars) ----------------------------------------
+module imagesModule './modules/images.bicep' = {
+  name: 'images'
+  params: {
+    location:          location
+    imagesAccountName: imagesAccountName
+  }
+}
+
+// 5) FastAPI Web-App ---------------------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -78,11 +88,17 @@ module webAppModule './modules/webapp.bicep' = {
     // Optional: set defaults here so single deployment is enough
     loginTelemetry: '1'
     geoipProvider:  'azmaps'
+
+    // ⟨NEW⟩ Images storage wiring (for avatars via SAS/stream)
+    imagesAccountName:   imagesModule.outputs.imagesAccountName
+    imagesContainerName: imagesModule.outputs.avatarsContainerName
+    imagesBlobEndpoint:  imagesModule.outputs.blobEndpoint
+    imagesAccountId:     imagesModule.outputs.imagesAccountId
   }
-  dependsOn: [ cosmosModule, planModule, mapsModule ]
+  dependsOn: [ cosmosModule, planModule, mapsModule, imagesModule ]
 }
 
-// 5) Durable Scheduler -------------------------------------------------------
+// 6) Durable Scheduler -------------------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -97,7 +113,7 @@ module schedulerModule './modules/scheduler.bicep' = {
   dependsOn: [ cosmosModule, planModule ]
 }
 
-// 6) Static Web-App (Vue frontend) ------------------------------------------
+// 7) Static Web-App (Vue frontend) ------------------------------------------
 module staticWebModule './modules/staticweb.bicep' = {
   name: 'staticWeb'
   params: {
@@ -106,10 +122,16 @@ module staticWebModule './modules/staticweb.bicep' = {
   }
 }
 
-output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
-output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
-output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
-output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
-output staticSiteName        string = staticWebModule.outputs.staticSiteName
-output webAppName            string = webAppModule.outputs.webAppName    // ← existing
-output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
+output cosmosAccountName       string = cosmosModule.outputs.cosmosAccountName
+output schedulerFunctionName   string = schedulerModule.outputs.schedulerFunctionName
+output schedulerStorageName    string = schedulerModule.outputs.schedulerStorageName
+output staticSiteHostname      string = staticWebModule.outputs.staticSiteHostname
+output staticSiteName          string = staticWebModule.outputs.staticSiteName
+output webAppName              string = webAppModule.outputs.webAppName    // ← existing
+output mapsAccountName         string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
+
+// ⟨NEW⟩ Images outputs for downstream workflows (if needed)
+output imagesAccountName       string = imagesModule.outputs.imagesAccountName
+output imagesAccountId         string = imagesModule.outputs.imagesAccountId
+output avatarsContainerName    string = imagesModule.outputs.avatarsContainerName
+output imagesBlobEndpoint      string = imagesModule.outputs.blobEndpoint

@@ -3,7 +3,7 @@
 import { reactive, computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
 import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
-import { redeemCode as apiRedeemCode } from '@/services/auth.js' /* ⟨NEW⟩ */
+import { redeemCode as apiRedeemCode, uploadAvatar as apiUploadAvatar } from '@/services/auth.js' /* ⟨NEW⟩ */
 import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
@@ -16,6 +16,7 @@ import BaseButtons from '@/components/BaseButtons.vue'
 import UserCard from '@/components/UserCard.vue'
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
+import UserAvatarCurrentUser from '@/components/UserAvatarCurrentUser.vue' /* ⟨NEW⟩ */
 
 const mainStore = useMainStore()
 
@@ -91,6 +92,75 @@ const submitRedeem = async () => {
     redeemLoading.value = false
   }
 }
+
+/* ⟨NEW⟩ Avatar upload gating & validation */
+const isAdmin = computed(() => !!auth.user?.is_admin)
+const isPremium = computed(() => !!auth.user?.is_premium_member)
+const canUploadAvatar = computed(() => isAdmin.value || isPremium.value)
+
+const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png']
+const acceptTypes = computed(() => (isAdmin.value ? 'image/*' : allowedMimes.join(',')))
+
+const selectedAvatar = ref(/** @type {File|null} */ (null))
+const avatarError = ref('')
+const avatarSuccess = ref('')
+const uploading = ref(false)
+
+function handleAvatarPick(e) {
+  avatarError.value = ''
+  avatarSuccess.value = ''
+  let file = null
+
+  // Try to normalize different emit shapes (native input or custom component)
+  if (e?.target?.files?.length) file = e.target.files[0]
+  else if (e instanceof File) file = e
+  else if (e && e[0] instanceof File) file = e[0]
+
+  if (!file) {
+    selectedAvatar.value = null
+    return
+  }
+
+  if (!isAdmin.value) {
+    if (!allowedMimes.includes((file.type || '').toLowerCase())) {
+      avatarError.value = 'Only JPG/JPEG/PNG are allowed for non-admin users.'
+      selectedAvatar.value = null
+      return
+    }
+    if (file.size > 512 * 1024) {
+      avatarError.value = 'File too large. Maximum is 512 KB for non-admin users.'
+      selectedAvatar.value = null
+      return
+    }
+  }
+
+  selectedAvatar.value = file
+}
+
+async function submitAvatar() {
+  avatarError.value = ''
+  avatarSuccess.value = ''
+  if (!canUploadAvatar.value) {
+    avatarError.value = 'You need Premium membership to upload an avatar.'
+    return
+  }
+  if (!selectedAvatar.value) {
+    avatarError.value = 'Please choose a file first.'
+    return
+  }
+  uploading.value = true
+  try {
+    await apiUploadAvatar(selectedAvatar.value)
+    // Refresh profile to get new SAS URL (avatar_url) from /me
+    await auth.refresh()
+    avatarSuccess.value = 'Avatar uploaded successfully.'
+    selectedAvatar.value = null
+  } catch (err) {
+    avatarError.value = err?.message || 'Avatar upload failed.'
+  } finally {
+    uploading.value = false
+  }
+}
 </script>
 
 <template>
@@ -161,9 +231,57 @@ const submitRedeem = async () => {
       </CardBox>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- LEFT: Profile (with avatar box) -->
         <CardBox is-form @submit.prevent="submitProfile">
-          <FormField label="Avatar" help="Max 500kb">
-            <FormFilePicker label="Upload" />
+          <!-- ⟨NEW⟩ Avatar box: show current avatar + gated upload -->
+          <FormField
+            label="Avatar"
+            :help="isAdmin ? 'Admins: any image type/size allowed (including GIF). Overwrites previous avatar.' : 'Premium: JPG/JPEG/PNG only, max 512 KB. Overwrites previous avatar.'"
+          >
+            <!-- Current avatar preview (uses SAS URL when custom) -->
+            <div class="flex items-center space-x-4 mb-4">
+              <div class="w-20 h-20">
+                <UserAvatarCurrentUser />
+              </div>
+              <div class="text-sm text-gray-600 dark:text-gray-300">
+                <div>
+                  <b>Current:</b>
+                  <span v-if="auth.user?.profile_pic_type === 'custom'">Custom image</span>
+                  <span v-else>Default image #{{ auth.user?.profile_pic_id || 1 }}</span>
+                </div>
+                <div v-if="auth.user?.avatar_url" class="truncate max-w-xs">
+                  <span class="opacity-70">SAS URL in use</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- File picker (keeps existing component) -->
+            <FormFilePicker
+              label="Choose file"
+              :accept="acceptTypes"
+              :disabled="!canUploadAvatar"
+              @change="handleAvatarPick"
+            />
+
+            <!-- Inline validation status -->
+            <div v-if="avatarError" class="mt-2 text-sm text-red-600">
+              {{ avatarError }}
+            </div>
+            <div v-if="avatarSuccess" class="mt-2 text-sm text-green-600">
+              {{ avatarSuccess }}
+            </div>
+
+            <template #footer>
+              <BaseButtons>
+                <BaseButton
+                  type="button"
+                  color="info"
+                  :label="uploading ? 'Uploading…' : 'Upload avatar'"
+                  :disabled="!canUploadAvatar || uploading || !selectedAvatar"
+                  @click="submitAvatar"
+                />
+              </BaseButtons>
+            </template>
           </FormField>
 
           <FormField label="Name" help="Required. Your name">
@@ -194,6 +312,7 @@ const submitRedeem = async () => {
           </template>
         </CardBox>
 
+        <!-- RIGHT: Password change -->
         <CardBox is-form @submit.prevent="submitPass">
           <FormField label="Current password" help="Required. Your current password">
             <FormControl

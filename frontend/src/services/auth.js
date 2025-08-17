@@ -155,7 +155,9 @@ export async function login(payload) {
  *   is_admin: boolean,
  *   is_premium_member: boolean,
  *   // NEW (optional):
- *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
+ *   login_context: { last_login_utc, ip, ua, locale, timezone, geo },
+ *   // NEW (optional when custom avatar exists):
+ *   avatar_url: string
  * }
  */
 export async function me() {
@@ -182,6 +184,7 @@ export async function me() {
         timezone: 'Europe/London',
         geo: { country_iso2: 'GB', source: 'mock' },
       },
+      // No avatar_url in mock by default
     })
   }
 
@@ -206,5 +209,48 @@ export async function redeemCode(code) {
     body: JSON.stringify({ code }),
   })
   if (!res.ok) await handleError(res, 'Redeem failed')
+  return res.json()
+}
+
+/* ─────────────────────────── NEW: Avatar APIs ─────────────────────────── */
+
+/**
+ * Upload or replace the current user's avatar.
+ * - Premium users: only jpg/jpeg/png, <512 KiB (defaults; server enforces).
+ * - Admin users: no size/type limit (server enforces).
+ * Returns void on success (204).
+ */
+export async function uploadAvatar(file) {
+  if (MOCK) {
+    // Pretend upload succeeded
+    return Promise.resolve()
+  }
+
+  if (!(file instanceof File)) {
+    throw new Error('Invalid file')
+  }
+
+  const form = new FormData()
+  form.append('file', file, file.name)
+
+  const res = await authFetch(`${API_BASE}/api/auth/avatar`, {
+    method: 'POST',
+    body: form, // do NOT set Content-Type; browser will add boundary
+  })
+
+  if (!res.ok) await handleError(res, 'Avatar upload failed')
+  // 204 No Content on success
+}
+
+/**
+ * Fetch a short-lived SAS URL for the current user's avatar (if custom exists).
+ * Returns { url, expiresAt } or throws if none.
+ */
+export async function getAvatarSasUrl() {
+  if (MOCK) {
+    return Promise.reject(new Error('No custom avatar in mock'))
+  }
+  const res = await authFetch(`${API_BASE}/api/auth/avatar/url`, { method: 'GET' })
+  if (!res.ok) await handleError(res, 'Failed to get avatar URL')
   return res.json()
 }

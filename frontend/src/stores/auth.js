@@ -1,7 +1,7 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars.
+// - Uses only built-in /assets/propics/*.png for avatars unless backend provides a SAS avatar_url.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
@@ -49,9 +49,18 @@ function writeToken(token) {
   }
 }
 
-function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
-  // Only 'default' supported for now
-  const id = Number(profile_pic_id) || avatarIds[0] || 1
+/**
+ * Resolve the avatar URL:
+ * - Prefer backend-provided SAS URL when the user has a custom avatar (`avatar_url`).
+ * - Otherwise fall back to bundled gallery image by `profile_pic_id`.
+ */
+function resolveAvatarUrl(user) {
+  // Prefer SAS URL from backend (short-lived; safe for <img src>)
+  if (user?.avatar_url && typeof user.avatar_url === 'string') {
+    return user.avatar_url
+  }
+  // Only 'default' supported otherwise (bundled images)
+  const id = Number(user?.profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
 }
 
@@ -82,6 +91,8 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
+      // ⟨NEW⟩ server-provided SAS URL when custom avatar exists
+      avatar_url?: string
       // ⟨NEW⟩ account flags
       is_admin?: boolean
       is_premium_member?: boolean
@@ -109,9 +120,7 @@ export const useAuth = defineStore('auth', () => {
   // getters
   const isAuthenticated = computed(() => !!token.value)
   const displayName     = computed(() => user.value?.username || '')
-  const avatarUrl       = computed(() =>
-    resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
-  )
+  const avatarUrl       = computed(() => resolveAvatarUrl(user.value))
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
   const lastLoginAt = computed(() => {
@@ -175,6 +184,7 @@ export const useAuth = defineStore('auth', () => {
           timezone: 'Europe/London',
           geo: { country_iso2: 'GB', source: 'mock' },
         },
+        // No avatar_url in mock
       }
       // ensure top-bar picks up the username
       syncMainStoreUser(user.value)
@@ -224,6 +234,7 @@ export const useAuth = defineStore('auth', () => {
           timezone: 'Europe/London',
           geo: { country_iso2: 'GB', source: 'mock' },
         },
+        // No avatar_url in mock
       }
       // sync for top-bar
       syncMainStoreUser(user.value)

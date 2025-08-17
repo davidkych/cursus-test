@@ -4,6 +4,7 @@ uvicorn[standard]==0.29.0
 gunicorn==23.0.0
 azure-identity==1.14.1
 azure-cosmos==4.6.0
+azure-storage-blob==12.19.0   # ← NEW: for avatar uploads to private Storage
 cryptography==41.0.7
 requests==2.32.3
 beautifulsoup4==4.12.3
