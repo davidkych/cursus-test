@@ -26,9 +26,18 @@ var appName        = '${prefix}-app'
 var schedFuncName  = '${prefix}-sched'
 var staticSiteName = '${prefix}-web'
 
-// Keep these globally unique & compliant
-var mapsAccountName   = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
-var imagesAccountName = '${toLower(replace(prefix, '-', ''))}img${substring(uniqueString(resourceGroup().id), 0, 6)}'
+// Keep it globally unique & compliant: lower, no dashes + short unique suffix
+var mapsAccountName = '${toLower(replace(prefix, '-', ''))}maps${substring(uniqueString(resourceGroup().id), 0, 6)}'
+
+// NEW: Images Storage Account name (letters/digits only, <=24 chars)
+//   base   = lower(prefix) without dashes
+//   suffix = "img" + 6-char unique
+//   trim base to fit 24 char total
+var _imgBase        = toLower(replace(prefix, '-', ''))
+var _imgSuffix      = 'img${substring(uniqueString(resourceGroup().id), 0, 6)}'
+var _imgMaxBaseLen  = 24 - length(_imgSuffix)
+var _imgTrimmedBase = length(_imgBase) > _imgMaxBaseLen ? substring(_imgBase, 0, _imgMaxBaseLen) : _imgBase
+var imagesAccountName = '${_imgTrimmedBase}${_imgSuffix}'
 
 // 1) App-Service Plan --------------------------------------------------------
 module planModule './modules/plan.bicep' = {
@@ -47,6 +56,7 @@ module cosmosModule './modules/cosmos.bicep' = {
     location: location
     appName:  appName
   }
+  dependsOn: [ planModule ]
 }
 
 // 3) Azure Maps (Gen2)  ------------------------------------------------------
@@ -58,17 +68,20 @@ module mapsModule './modules/maps.bicep' = {
   }
 }
 
-// 4) ✨ Images storage (private) ---------------------------------------------
+// 3.5) Images Storage (private) ----------------------------------------------
 module imagesModule './modules/images.bicep' = {
   name: 'images'
   params: {
-    prefix:            prefix
     location:          location
-    imagesAccountName: imagesAccountName   // ← pass known-at-start name
+    imagesAccountName: imagesAccountName
+    // can expand later: add more containers here
+    containerNames: [
+      'avatars'
+    ]
   }
 }
 
-// 5) FastAPI Web-App ---------------------------------------------------------
+// 4) FastAPI Web-App ---------------------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -83,20 +96,16 @@ module webAppModule './modules/webapp.bicep' = {
     aadTenantId:    aadTenantId
     aadClientId:    aadClientId
 
-    // Telemetry / Maps
+    // ⟨NEW⟩ Pipe Azure Maps primary key into app settings
     azureMapsKey:   mapsModule.outputs.mapsPrimaryKey
+    // Optional: set defaults here so single deployment is enough
     loginTelemetry: '1'
     geoipProvider:  'azmaps'
-
-    // ⟨NEW⟩ Image storage wiring for avatars (avoid module outputs here)
-    imagesAccountName: imagesAccountName
-    avatarContainer:   imagesModule.outputs.avatarsContainerNameOut
-    avatarBasePath:    'users'
-    avatarSasTtlMinutes: 5
   }
+  dependsOn: [ cosmosModule, planModule, mapsModule ]
 }
 
-// 6) Durable Scheduler -------------------------------------------------------
+// 5) Durable Scheduler -------------------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -108,9 +117,10 @@ module schedulerModule './modules/scheduler.bicep' = {
     containerName:         cosmosModule.outputs.containerName
     appName:               appName
   }
+  dependsOn: [ cosmosModule, planModule ]
 }
 
-// 7) Static Web-App (Vue frontend) ------------------------------------------
+// 6) Static Web-App (Vue frontend) ------------------------------------------
 module staticWebModule './modules/staticweb.bicep' = {
   name: 'staticWeb'
   params: {
@@ -119,14 +129,12 @@ module staticWebModule './modules/staticweb.bicep' = {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Outputs
-// ─────────────────────────────────────────────────────────────────────────────
 output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
 output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
 output staticSiteName        string = staticWebModule.outputs.staticSiteName
-output webAppName            string = webAppModule.outputs.webAppName
-output mapsAccountName       string = mapsAccountName
-output imagesAccountName     string = imagesAccountName
+output webAppName            string = webAppModule.outputs.webAppName    // ← existing
+output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
+output imagesAccountName     string = imagesModule.outputs.imagesAccountNameOut // ← NEW
+output imagesBlobEndpoint    string = imagesModule.outputs.imagesBlobEndpoint   // ← NEW

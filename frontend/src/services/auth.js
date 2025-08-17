@@ -64,6 +64,7 @@ export async function authFetch(url, init = {}) {
   if (res.status === 401) {
     // Silent logout: clear token; let caller route to /login on next nav.
     clearToken()
+    // Try to parse error for consistency
     try {
       await handleError(res, 'Unauthorized')
     } catch (err) {
@@ -154,9 +155,7 @@ export async function login(payload) {
  *   is_admin: boolean,
  *   is_premium_member: boolean,
  *   // NEW (optional):
- *   login_context: { last_login_utc, ip, ua, locale, timezone, geo },
- *   // NEW (optional when custom avatar exists):
- *   avatar_sas_url: string
+ *   login_context: { last_login_utc, ip, ua, locale, timezone, geo }
  * }
  */
 export async function me() {
@@ -183,7 +182,6 @@ export async function me() {
         timezone: 'Europe/London',
         geo: { country_iso2: 'GB', source: 'mock' },
       },
-      // mock has no custom avatar; avatar_sas_url omitted
     })
   }
 
@@ -208,28 +206,5 @@ export async function redeemCode(code) {
     body: JSON.stringify({ code }),
   })
   if (!res.ok) await handleError(res, 'Redeem failed')
-  return res.json()
-}
-
-/**
- * ⟨NEW⟩ Upload a custom avatar for the current user.
- * - Sends multipart/form-data with field name "file".
- * - Server enforces eligibility (premium/admin) and size/type rules.
- * - On success, callers should call `auth.refresh()` to fetch a fresh SAS URL.
- */
-export async function uploadAvatar(file) {
-  if (MOCK) {
-    // Pretend success; there is no real blob storage in mock
-    return Promise.resolve({ ok: true })
-  }
-
-  const form = new FormData()
-  form.append('file', file)
-
-  const res = await authFetch(`${API_BASE}/api/auth/avatar`, {
-    method: 'POST',
-    body: form, // do NOT set Content-Type; browser sets correct multipart boundary
-  })
-  if (!res.ok) await handleError(res, 'Avatar upload failed')
   return res.json()
 }

@@ -9,6 +9,7 @@ on:
       TIMEOUT:     { required: true, type: number }
       COSMOS:      { required: true, type: string }
       SCHED_FUNC:  { required: true, type: string }
+      IMAGES:      { required: true, type: string }   # ← NEW: images storage account name
     secrets:
       AZURE_CREDENTIALS: { required: true }
       JWT_SECRET:        { required: true }
@@ -81,6 +82,26 @@ jobs:
               --resource-group "$RG" --account-name "$COSMOS" \
               --principal-id "$principalId" --role-definition-id "$roleId" --scope "/"
 
+      # ── MSI → Storage RBAC (images) ---------------------------------------
+      - name: Grant Storage Blob Data Contributor to Web-App MSI (images)
+        env:
+          RG:     ${{ inputs.RG }}
+          APP:    ${{ inputs.APP }}
+          IMAGES: ${{ inputs.IMAGES }}
+        run: |
+          set -eo pipefail
+          principalId=$(az webapp identity show \
+              --resource-group "$RG" --name "$APP" --query principalId -o tsv)
+
+          scope=$(az storage account show \
+              --resource-group "$RG" --name "$IMAGES" --query id -o tsv)
+
+          # Idempotent: ignore if role exists already
+          az role assignment create \
+              --assignee "$principalId" \
+              --role "Storage Blob Data Contributor" \
+              --scope "$scope" || true
+
       # ── App settings: set ONLY deltas; leave infra-owned values to Bicep ---
       - name: Configure Web-App settings (secrets & runtime only)
         shell: bash
@@ -96,7 +117,9 @@ jobs:
             "WEBSITE_RUN_FROM_PACKAGE": "1",
             "PYTHONPATH": "/home/site/wwwroot/.python_packages/lib/site-packages",
             "JWT_SECRET": "$JWT_SECRET",
-            "USERS_CONTAINER": "users"
+            "USERS_CONTAINER": "users",
+            "IMAGES_ACCOUNT": "${{ inputs.IMAGES }}",
+            "IMAGES_CONTAINER": "avatars"
           }
           JSON
 

@@ -152,6 +152,7 @@ jobs:
       sched_func:  ${{ steps.resolve.outputs.SCHED_FUNC }}
       static_site: ${{ steps.resolve.outputs.STATIC_SITE }}
       cosmos:      ${{ steps.resolve.outputs.COSMOS }}
+      images:      ${{ steps.resolve.outputs.IMAGES }}     # ← NEW
     steps:
       - uses: actions/checkout@v3
 
@@ -161,7 +162,7 @@ jobs:
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
       - id: resolve
-        name: Derive names & discover Cosmos
+        name: Derive names & discover Cosmos / Images
         uses: azure/CLI@v2
         with:
           inlineScript: |
@@ -179,12 +180,29 @@ jobs:
               exit 1
             fi
 
+            # Discover images storage account by naming pattern: <lower(prefix-no-dash)> + 'img' + <6>
+            img_base="$(echo "$PREFIX" | tr '[:upper:]' '[:lower:]' | tr -d '-')"
+            IMAGES="$(az storage account list -g "$RG" \
+              --query "[?starts_with(name, '${img_base}') && contains(name, 'img')].name | [0]" -o tsv)"
+
+            # Fallback: first StorageV2 with public access disabled
+            if [ -z "$IMAGES" ]; then
+              IMAGES="$(az storage account list -g "$RG" \
+                --query "[?kind=='StorageV2' && properties.allowBlobPublicAccess==\`false\`].name | [0]" -o tsv)"
+            fi
+
+            if [ -z "$IMAGES" ]; then
+              echo "Could not resolve images storage account in RG $RG" >&2
+              exit 1
+            fi
+
             {
               echo "RG=$RG"
               echo "APP=$APP"
               echo "SCHED_FUNC=$SCHED_FUNC"
               echo "STATIC_SITE=$STATIC_SITE"
               echo "COSMOS=$COSMOS"
+              echo "IMAGES=$IMAGES"
             } >> "$GITHUB_OUTPUT"
 
   # ────────────────────────── web-app (after infra) ──────────────────────────
@@ -198,6 +216,7 @@ jobs:
       TIMEOUT:    1800
       COSMOS:     ${{ needs.infra.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
+      IMAGES:     ${{ needs.infra.outputs.images_account }}   # ← NEW
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}
@@ -213,6 +232,7 @@ jobs:
       TIMEOUT:    1800
       COSMOS:     ${{ needs.resolve.outputs.cosmos }}
       SCHED_FUNC: ${{ needs.resolve.outputs.sched_func }}
+      IMAGES:     ${{ needs.resolve.outputs.images }}         # ← NEW
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}
