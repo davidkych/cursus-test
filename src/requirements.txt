@@ -4,6 +4,7 @@ uvicorn[standard]==0.29.0
 gunicorn==23.0.0
 azure-identity==1.14.1
 azure-cosmos==4.6.0
+azure-storage-blob==12.19.1    # for avatar uploads + SAS (via MSI)
 cryptography==41.0.7
 requests==2.32.3
 beautifulsoup4==4.12.3
@@ -12,3 +13,4 @@ pdfplumber==0.10.4
 passlib==1.7.4          # password hashing (pure-python)
 PyJWT==2.8.0            # JWT encoding/decoding
 user-agents==2.2.0      # UA parser for login analytics  ← NEW
+Pillow==10.3.0          # robust image type sniffing/validation

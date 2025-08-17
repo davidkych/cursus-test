@@ -6,6 +6,13 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, jwt
 
+# ⟨NEW⟩ storage for short-lived SAS
+from azure.storage.blob import (
+    BlobServiceClient,
+    BlobSasPermissions,
+    generate_blob_sas,
+)
+
 # ⟨NEW⟩ shared defaults for user flags
 from .common import apply_default_user_flags
 
@@ -20,6 +27,47 @@ _client = CosmosClient(
     credential=DefaultAzureCredential()
 )
 _users = _client.get_database_client(_database_name).get_container_client(_users_container)
+
+# ⟨NEW⟩ Images storage (optional – only used when returning custom avatar SAS)
+_images_account   = os.getenv("IMAGES_ACCOUNT")             # e.g., from web-app.yml
+_images_container = os.getenv("IMAGES_CONTAINER", "avatars")
+
+_blob_service: Optional[BlobServiceClient] = None
+if _images_account:
+    _blob_service = BlobServiceClient(
+        account_url=f"https://{_images_account}.blob.core.windows.net",
+        credential=DefaultAzureCredential(),
+    )
+
+# Simple in-memory cache for a user delegation key (avoid per-request fetch)
+# We cache only for the current process lifetime and refresh proactively.
+_udk_cache: Dict[str, Any] = {"key": None, "expires_at": None}
+
+def _get_user_delegation_key() -> Optional[Any]:
+    """
+    Get or refresh a User Delegation Key for generating SAS.
+    Returns None if images storage is not configured or MSI lacks permissions.
+    """
+    global _udk_cache
+    if not _blob_service:
+        return None
+
+    now = datetime.datetime.utcnow()
+    # Refresh if missing or expiring within 5 minutes
+    exp_at: Optional[datetime.datetime] = _udk_cache.get("expires_at")
+    if _udk_cache.get("key") is not None and exp_at and exp_at - now > datetime.timedelta(minutes=5):
+        return _udk_cache["key"]
+
+    try:
+        start  = now - datetime.timedelta(minutes=5)
+        expire = now + datetime.timedelta(hours=1)
+        key = _blob_service.get_user_delegation_key(start, expire)
+        _udk_cache["key"] = key
+        _udk_cache["expires_at"] = expire
+        return key
+    except Exception:
+        # RBAC not granted yet or storage not reachable
+        return None
 
 # ────────────────────────── Response models ───────────────────────
 class LoginContext(BaseModel):
@@ -51,6 +99,9 @@ class UserMeOut(BaseModel):
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
 
+    # ⟨NEW⟩ short-lived SAS URL for custom avatar (optional)
+    avatar_url: Optional[str] = None
+
 # ──────────────────────────── Helpers ────────────────────────────
 def _extract_bearer_token(req: Request) -> str:
     auth = req.headers.get("Authorization", "")
@@ -77,6 +128,34 @@ def _get_user_by_username(username: str):
     except exceptions.CosmosResourceNotFoundError:
         return None
 
+def _build_avatar_sas_url(blob_name: str) -> Optional[str]:
+    """
+    Return a read-only SAS URL valid for ~10 minutes for the given blob name.
+    Requires IMAGES_ACCOUNT + MSI RBAC (Storage Blob Data Contributor).
+    """
+    if not _blob_service or not _images_account or not _images_container:
+        return None
+
+    # Acquire or refresh a user delegation key
+    udk = _get_user_delegation_key()
+    if not udk:
+        return None
+
+    # Mint SAS for this specific blob
+    expiry = datetime.datetime.utcnow() + datetime.timedelta(minutes=10)
+    try:
+        sas = generate_blob_sas(
+            account_name=_images_account,
+            container_name=_images_container,
+            blob_name=blob_name,
+            user_delegation_key=udk,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry,
+        )
+        return f"https://{_images_account}.blob.core.windows.net/{_images_container}/{blob_name}?{sas}"
+    except Exception:
+        return None
+
 # ──────────────────────────── Router ────────────────────────────
 router = APIRouter(
     prefix="/api/auth",
@@ -91,6 +170,7 @@ def me(request: Request):
     Returns extended 'login_context' (latest snapshot) and the new
     'is_admin' / 'is_premium_member' flags. Missing flags default to False.
     Opportunistically persists defaults if flags were missing.
+    If a custom avatar exists, returns a short-lived SAS URL (avatar_url).
     """
     token = _extract_bearer_token(request)
     username = _decode_jwt(token)
@@ -124,6 +204,15 @@ def me(request: Request):
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     if "login_context" in doc and isinstance(doc["login_context"], dict):
         payload["login_context"] = doc["login_context"]
+
+    # ⟨NEW⟩ Add a short-lived SAS for custom avatars (if configured & present)
+    if payload.get("profile_pic_type") == "custom":
+        meta = doc.get("custom_avatar")
+        blob_name = meta.get("blob") if isinstance(meta, dict) else None
+        if isinstance(blob_name, str) and blob_name:
+            sas_url = _build_avatar_sas_url(blob_name)
+            if sas_url:
+                payload["avatar_url"] = sas_url
 
     # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
     if missing_flags:
