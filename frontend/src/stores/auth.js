@@ -1,7 +1,7 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars.
+// - Uses only built-in /assets/propics/*.png for avatars, unless backend returns a short-lived SAS (avatar_url) for custom uploads.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
@@ -50,7 +50,7 @@ function writeToken(token) {
 }
 
 function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
-  // Only 'default' supported for now
+  // Only 'default' supported for asset map; 'custom' is handled via /me.avatar_url
   const id = Number(profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
 }
@@ -82,6 +82,7 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
+      avatar_url?: string              // ← NEW: short-lived SAS for custom avatars
       // ⟨NEW⟩ account flags
       is_admin?: boolean
       is_premium_member?: boolean
@@ -109,9 +110,15 @@ export const useAuth = defineStore('auth', () => {
   // getters
   const isAuthenticated = computed(() => !!token.value)
   const displayName     = computed(() => user.value?.username || '')
-  const avatarUrl       = computed(() =>
-    resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
-  )
+  const avatarUrl       = computed(() => {
+    const u = user.value
+    // Prefer backend-provided short-lived SAS when profile_pic_type is 'custom'
+    if (u?.profile_pic_type === 'custom' && typeof u?.avatar_url === 'string' && u.avatar_url) {
+      return u.avatar_url
+    }
+    // Fallback to built-in assets by id
+    return resolveAvatarUrl(u?.profile_pic_id, u?.profile_pic_type)
+  })
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
   const lastLoginAt = computed(() => {
