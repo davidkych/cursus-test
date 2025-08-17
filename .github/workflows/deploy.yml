@@ -147,15 +147,11 @@ jobs:
     if: ${{ needs.changes.outputs.run_infra != 'true' && (needs.changes.outputs.run_webapp == 'true' || needs.changes.outputs.run_scheduler == 'true' || needs.changes.outputs.run_staticweb == 'true') }}
     runs-on: ubuntu-latest
     outputs:
-      rg:                  ${{ steps.resolve.outputs.RG }}
-      app:                 ${{ steps.resolve.outputs.APP }}
-      sched_func:          ${{ steps.resolve.outputs.SCHED_FUNC }}
-      static_site:         ${{ steps.resolve.outputs.STATIC_SITE }}
-      cosmos:              ${{ steps.resolve.outputs.COSMOS }}
-      # ⟨NEW⟩ avatars (read from existing Web App app settings)
-      avatars_account:     ${{ steps.resolve.outputs.AVATARS_ACCOUNT }}
-      avatars_container:   ${{ steps.resolve.outputs.AVATARS_CONTAINER }}
-      avatars_public_base: ${{ steps.resolve.outputs.AVATARS_PUBLIC_BASE }}
+      rg:          ${{ steps.resolve.outputs.RG }}
+      app:         ${{ steps.resolve.outputs.APP }}
+      sched_func:  ${{ steps.resolve.outputs.SCHED_FUNC }}
+      static_site: ${{ steps.resolve.outputs.STATIC_SITE }}
+      cosmos:      ${{ steps.resolve.outputs.COSMOS }}
     steps:
       - uses: actions/checkout@v3
 
@@ -165,7 +161,7 @@ jobs:
           creds:     ${{ secrets.AZURE_CREDENTIALS }}
 
       - id: resolve
-        name: Derive names & discover resources
+        name: Derive names & discover Cosmos
         uses: azure/CLI@v2
         with:
           inlineScript: |
@@ -183,24 +179,13 @@ jobs:
               exit 1
             fi
 
-            # ⟨NEW⟩ Try to read avatars config from existing Web App settings
-            AVA_ACCOUNT="$(az webapp config appsettings list -g "$RG" -n "$APP" --query "[?name=='AVATAR_STORAGE_ACCOUNT_NAME'].value | [0]" -o tsv || true)"
-            AVA_CONTAINER="$(az webapp config appsettings list -g "$RG" -n "$APP" --query "[?name=='AVATAR_CONTAINER_NAME'].value | [0]" -o tsv || true)"
-            AVA_PUBLIC="$(az webapp config appsettings list -g "$RG" -n "$APP" --query "[?name=='AVATAR_PUBLIC_BASE'].value | [0]" -o tsv || true)"
-
             {
               echo "RG=$RG"
               echo "APP=$APP"
               echo "SCHED_FUNC=$SCHED_FUNC"
               echo "STATIC_SITE=$STATIC_SITE"
               echo "COSMOS=$COSMOS"
-              echo "AVATARS_ACCOUNT=$AVA_ACCOUNT"
-              echo "AVATARS_CONTAINER=${AVA_CONTAINER:-avatars}"
-              echo "AVATARS_PUBLIC_BASE=$AVA_PUBLIC"
             } >> "$GITHUB_OUTPUT"
-
-            echo "➡ resolved: rg=$RG app=$APP cosmos=$COSMOS sched=$SCHED_FUNC static=$STATIC_SITE"
-            echo "🖼 avatars (from app settings): account=${AVA_ACCOUNT:-<unset>} container=${AVA_CONTAINER:-avatars} public_base=${AVA_PUBLIC:-<unset>}"
 
   # ────────────────────────── web-app (after infra) ──────────────────────────
   web_app_after_infra:
@@ -208,15 +193,11 @@ jobs:
     if: ${{ needs.changes.outputs.run_webapp == 'true' && needs.changes.outputs.run_infra == 'true' }}
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:                   ${{ needs.infra.outputs.rg }}
-      APP:                  ${{ needs.infra.outputs.app }}
-      TIMEOUT:              1800
-      COSMOS:               ${{ needs.infra.outputs.cosmos }}
-      SCHED_FUNC:           ${{ needs.infra.outputs.sched_func }}
-      # ⟨NEW⟩ avatars wiring from infra outputs
-      AVATARS_ACCOUNT:      ${{ needs.infra.outputs.avatars_account }}
-      AVATARS_CONTAINER:    ${{ needs.infra.outputs.avatars_container }}
-      AVATARS_PUBLIC_BASE:  ${{ needs.infra.outputs.avatars_public_base }}
+      RG:         ${{ needs.infra.outputs.rg }}
+      APP:        ${{ needs.infra.outputs.app }}
+      TIMEOUT:    1800
+      COSMOS:     ${{ needs.infra.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.infra.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}
@@ -227,15 +208,11 @@ jobs:
     if: ${{ needs.changes.outputs.run_webapp == 'true' && needs.changes.outputs.run_infra != 'true' }}
     uses: ./.github/workflows/web-app.yml
     with:
-      RG:                   ${{ needs.resolve.outputs.rg }}
-      APP:                  ${{ needs.resolve.outputs.app }}
-      TIMEOUT:              1800
-      COSMOS:               ${{ needs.resolve.outputs.cosmos }}
-      SCHED_FUNC:           ${{ needs.resolve.outputs.sched_func }}
-      # ⟨NEW⟩ avatars from resolve (read from existing app settings)
-      AVATARS_ACCOUNT:      ${{ needs.resolve.outputs.avatars_account }}
-      AVATARS_CONTAINER:    ${{ needs.resolve.outputs.avatars_container }}
-      AVATARS_PUBLIC_BASE:  ${{ needs.resolve.outputs.avatars_public_base }}
+      RG:         ${{ needs.resolve.outputs.rg }}
+      APP:        ${{ needs.resolve.outputs.app }}
+      TIMEOUT:    1800
+      COSMOS:     ${{ needs.resolve.outputs.cosmos }}
+      SCHED_FUNC: ${{ needs.resolve.outputs.sched_func }}
     secrets:
       AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
       JWT_SECRET:        ${{ secrets.JWT_SECRET }}

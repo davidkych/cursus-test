@@ -1,7 +1,7 @@
 // frontend/src/stores/auth.js
 // Centralized auth store: token, current user, avatar URL, init/login/logout/fetchMe.
 // - No hardcoding of API base (service layer already handles VITE_API_BASE).
-// - Uses only built-in /assets/propics/*.png for avatars OR a custom URL from backend.
+// - Uses only built-in /assets/propics/*.png for avatars.
 // - Supports optional dev mock via VITE_AUTH_MOCK=1.
 // - Leaves routing decisions to callers (e.g., router guards / NavBar).
 
@@ -49,16 +49,8 @@ function writeToken(token) {
   }
 }
 
-/**
- * Resolve the avatar URL to display.
- * - If backend has set a custom avatar (`profile_pic_type === 'custom'`) and provided a direct `profile_pic_url`,
- *   prefer that URL.
- * - Otherwise fall back to the local catalogue image determined by `profile_pic_id`.
- */
-function resolveAvatarUrl(profile_pic_id, profile_pic_type, profile_pic_url) {
-  if (profile_pic_type === 'custom' && typeof profile_pic_url === 'string' && profile_pic_url) {
-    return profile_pic_url
-  }
+function resolveAvatarUrl(profile_pic_id, profile_pic_type) {
+  // Only 'default' supported for now
   const id = Number(profile_pic_id) || avatarIds[0] || 1
   return avatarMap[id] || avatarMap[avatarIds[0]] || ''
 }
@@ -90,7 +82,6 @@ export const useAuth = defineStore('auth', () => {
       country?: string
       profile_pic_id?: number
       profile_pic_type?: 'default'|'custom'
-      profile_pic_url?: string | null       // ⟨NEW⟩ direct URL for custom avatar
       // ⟨NEW⟩ account flags
       is_admin?: boolean
       is_premium_member?: boolean
@@ -119,11 +110,7 @@ export const useAuth = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!token.value)
   const displayName     = computed(() => user.value?.username || '')
   const avatarUrl       = computed(() =>
-    resolveAvatarUrl(
-      user.value?.profile_pic_id,
-      user.value?.profile_pic_type,
-      user.value?.profile_pic_url,         // ⟨NEW⟩ prefer server-provided custom URL
-    ),
+    resolveAvatarUrl(user.value?.profile_pic_id, user.value?.profile_pic_type),
   )
 
   // ⟨NEW⟩ convenience getters for telemetry (safe, read-only)
@@ -172,7 +159,6 @@ export const useAuth = defineStore('auth', () => {
         country: 'HKG',
         profile_pic_id: 1,
         profile_pic_type: 'default',
-        profile_pic_url: null,
         // NEW flags (defaults)
         is_admin: false,
         is_premium_member: false,
@@ -227,7 +213,6 @@ export const useAuth = defineStore('auth', () => {
         created: new Date().toISOString(),
         profile_pic_id: 1,
         profile_pic_type: 'default',
-        profile_pic_url: null,
         // NEW flags (defaults)
         is_admin: false,
         is_premium_member: false,

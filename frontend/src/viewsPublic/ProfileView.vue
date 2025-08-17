@@ -2,8 +2,8 @@
 <script setup>
 import { reactive, computed, ref } from 'vue'
 import { useMainStore } from '@/stores/main'
-import { useAuth } from '@/stores/auth.js'
-import { redeemCode as apiRedeemCode, uploadAvatar as apiUploadAvatar } from '@/services/auth.js'
+import { useAuth } from '@/stores/auth.js'                    /* ⟨NEW⟩ */
+import { redeemCode as apiRedeemCode } from '@/services/auth.js' /* ⟨NEW⟩ */
 import { mdiAccount, mdiMail, mdiAsterisk, mdiFormTextboxPassword, mdiGithub } from '@mdi/js'
 import SectionMain from '@/components/SectionMain.vue'
 import CardBox from '@/components/CardBox.vue'
@@ -16,7 +16,6 @@ import BaseButtons from '@/components/BaseButtons.vue'
 import UserCard from '@/components/UserCard.vue'
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue'
-import UserAvatarCurrentUser from '@/components/UserAvatarCurrentUser.vue'
 
 const mainStore = useMainStore()
 
@@ -48,23 +47,26 @@ const lastLogin = computed(() => {
   return iso ? new Date(iso).toLocaleString() : ''
 })
 
-/* ⟨NEW⟩ Feature gating flags */
-const isAdmin = computed(() => !!auth.user?.is_admin)
-const isPremium = computed(() => !!auth.user?.is_premium_member)
-const canUploadAvatar = computed(() => isAdmin.value || isPremium.value)
-
-/* Existing forms */
 const profileForm = reactive({
   name: mainStore.userName,
   email: mainStore.userEmail,
 })
+
 const passwordForm = reactive({
   password_current: '',
   password: '',
   password_confirmation: '',
 })
 
-/* ⟨NEW⟩ Redeem code form (unchanged) */
+const submitProfile = () => {
+  mainStore.setUser(profileForm)
+}
+
+const submitPass = () => {
+  //
+}
+
+/* ⟨NEW⟩ Redeem code form */
 const redeemForm = reactive({ code: '' })
 const redeemLoading = ref(false)
 const redeemError = ref('')
@@ -88,76 +90,6 @@ const submitRedeem = async () => {
   } finally {
     redeemLoading.value = false
   }
-}
-
-/* ⟨NEW⟩ Avatar upload state */
-const avatarFile = ref(/** @type {File|null} */(null))
-const avatarError = ref('')
-const avatarSuccess = ref('')
-const avatarUploading = ref(false)
-
-/** Client-side validation per requirements (admins bypass both type/size). */
-function validateAvatarFile(file) {
-  if (!file) return 'Please choose a file'
-  if (!isAdmin.value) {
-    const okTypes = ['image/jpeg', 'image/jpg', 'image/png']
-    if (!okTypes.includes((file.type || '').toLowerCase())) {
-      return 'Only JPG or PNG images are allowed'
-    }
-    if (file.size > 512 * 1024) {
-      return 'Avatar file exceeds 512 KB limit'
-    }
-  }
-  return ''
-}
-
-/** Handle `<FormFilePicker>` model updates (expects File or null). */
-function onAvatarPicked(f) {
-  avatarError.value = ''
-  avatarSuccess.value = ''
-  // Support FileList or File
-  const chosen = (Array.isArray(f) ? f[0] : (f && f.length !== undefined ? f[0] : f)) || null
-  avatarFile.value = chosen
-  if (chosen && !isAdmin.value) {
-    const msg = validateAvatarFile(chosen)
-    if (msg) avatarError.value = msg
-  }
-}
-
-/* Existing submit handlers */
-const submitProfile = async () => {
-  // Always allow updating the local name/email (existing behavior)
-  mainStore.setUser(profileForm)
-
-  // If a file is selected, attempt upload with gating and validation
-  if (avatarFile.value) {
-    avatarError.value = ''
-    avatarSuccess.value = ''
-    if (!canUploadAvatar.value) {
-      avatarError.value = 'Custom avatar requires Premium.'
-      return
-    }
-    const msg = validateAvatarFile(avatarFile.value)
-    if (msg) {
-      avatarError.value = msg
-      return
-    }
-    avatarUploading.value = true
-    try {
-      const updated = await apiUploadAvatar(avatarFile.value)
-      auth.setUser(updated)              // refresh store (and top bar / avatar components)
-      avatarSuccess.value = 'Avatar uploaded successfully.'
-      avatarFile.value = null
-    } catch (err) {
-      avatarError.value = err?.message || 'Avatar upload failed'
-    } finally {
-      avatarUploading.value = false
-    }
-  }
-}
-
-const submitPass = () => {
-  //
 }
 </script>
 
@@ -229,44 +161,10 @@ const submitPass = () => {
       </CardBox>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- LEFT: Profile + Avatar (existing form, now enhanced) -->
         <CardBox is-form @submit.prevent="submitProfile">
-          <!-- ⟨NEW⟩ Show current avatar at top of the box -->
-          <div class="mb-4 flex items-center space-x-4">
-            <UserAvatarCurrentUser class="w-20 h-20" />
-            <div class="text-sm text-gray-600 dark:text-gray-300">
-              <div v-if="!canUploadAvatar" class="text-red-600">
-                Custom avatar requires Premium.
-              </div>
-              <div v-else>
-                You can upload a custom avatar.
-                <span v-if="!isAdmin"> JPG/PNG • ≤ 512 KB</span>
-                <span v-else> Admin: no type/size limit</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- ⟨NEW⟩ Inline messages for avatar -->
-          <template v-if="avatarError">
-            <div class="mb-3 text-sm text-red-600">{{ avatarError }}</div>
-          </template>
-          <template v-if="avatarSuccess && !avatarError">
-            <div class="mb-3 text-sm text-green-600">{{ avatarSuccess }}</div>
-          </template>
-
-          <FormField label="Avatar" :help="isAdmin ? 'Any image type/size (admin bypass)' : 'JPG/PNG • ≤ 512 KB'">
-            <!-- Expect FormFilePicker to support v-model with File or FileList -->
-            <FormFilePicker
-              v-model="avatarFile"
-              label="Upload"
-              name="avatar"
-              accept="image/*"
-              :disabled="!canUploadAvatar || avatarUploading"
-              @update:modelValue="onAvatarPicked"
-            />
+          <FormField label="Avatar" help="Max 500kb">
+            <FormFilePicker label="Upload" />
           </FormField>
-
-          <BaseDivider />
 
           <FormField label="Name" help="Required. Your name">
             <FormControl
@@ -290,18 +188,12 @@ const submitPass = () => {
 
           <template #footer>
             <BaseButtons>
-              <BaseButton
-                color="info"
-                type="submit"
-                :label="avatarUploading ? 'Uploading…' : 'Submit'"
-                :disabled="avatarUploading"
-              />
+              <BaseButton color="info" type="submit" label="Submit" />
               <BaseButton color="info" label="Options" outline />
             </BaseButtons>
           </template>
         </CardBox>
 
-        <!-- RIGHT: Password (unchanged) -->
         <CardBox is-form @submit.prevent="submitPass">
           <FormField label="Current password" help="Required. Your current password">
             <FormControl

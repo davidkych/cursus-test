@@ -4,15 +4,11 @@ name: Web-App Reusable
 on:
   workflow_call:
     inputs:
-      RG:          { required: true,  type: string }
-      APP:         { required: true,  type: string }
-      TIMEOUT:     { required: true,  type: number }
-      COSMOS:      { required: true,  type: string }
-      SCHED_FUNC:  { required: true,  type: string }
-      # ⟨NEW⟩ Avatars storage (separate account)
-      AVATARS_ACCOUNT:     { required: false, type: string, default: "" }
-      AVATARS_CONTAINER:   { required: false, type: string, default: "avatars" }
-      AVATARS_PUBLIC_BASE: { required: false, type: string, default: "" }
+      RG:          { required: true, type: string }
+      APP:         { required: true, type: string }
+      TIMEOUT:     { required: true, type: number }
+      COSMOS:      { required: true, type: string }
+      SCHED_FUNC:  { required: true, type: string }
     secrets:
       AZURE_CREDENTIALS: { required: true }
       JWT_SECRET:        { required: true }
@@ -85,61 +81,11 @@ jobs:
               --resource-group "$RG" --account-name "$COSMOS" \
               --principal-id "$principalId" --role-definition-id "$roleId" --scope "/"
 
-      # ── ⟨NEW⟩ Ensure avatars container exists (idempotent) -----------------
-      - name: Ensure avatars container exists
-        if: ${{ inputs.AVATARS_ACCOUNT != '' }}
-        env:
-          RG:        ${{ inputs.RG }}
-          SA_NAME:   ${{ inputs.AVATARS_ACCOUNT }}
-          CONT_NAME: ${{ inputs.AVATARS_CONTAINER }}
-        run: |
-          set -eo pipefail
-          # This uses SP credentials (login) with RBAC; no account key needed.
-          az storage container create \
-            --account-name "$SA_NAME" \
-            --name "$CONT_NAME" \
-            --public-access blob \
-            --auth-mode login \
-            >/dev/null
-          echo "🖼 ensured container '$CONT_NAME' on '$SA_NAME'"
-
-      # ── ⟨NEW⟩ Grant Storage Blob Data Contributor to Web-App MSI ----------
-      - name: Grant Storage Blob Data Contributor to Web-App MSI
-        if: ${{ inputs.AVATARS_ACCOUNT != '' }}
-        env:
-          RG:      ${{ inputs.RG }}
-          APP:     ${{ inputs.APP }}
-          SA_NAME: ${{ inputs.AVATARS_ACCOUNT }}
-        run: |
-          set -eo pipefail
-          principalId=$(az webapp identity show \
-              --resource-group "$RG" --name "$APP" --query principalId -o tsv)
-
-          scopeId=$(az storage account show -g "$RG" -n "$SA_NAME" --query id -o tsv)
-
-          # Idempotent role assignment
-          if ! az role assignment list \
-                --assignee-object-id "$principalId" \
-                --role "Storage Blob Data Contributor" \
-                --scope "$scopeId" \
-                --query "[0].id" -o tsv | grep -q .; then
-            az role assignment create \
-              --assignee-object-id "$principalId" \
-              --assignee-principal-type ServicePrincipal \
-              --role "Storage Blob Data Contributor" \
-              --scope "$scopeId"
-          else
-            echo "✅ Role already assigned on $scopeId"
-          fi
-
       # ── App settings: set ONLY deltas; leave infra-owned values to Bicep ---
       - name: Configure Web-App settings (secrets & runtime only)
         shell: bash
         env:
-          JWT_SECRET:         ${{ secrets.JWT_SECRET }}
-          AVA_ACCOUNT:        ${{ inputs.AVATARS_ACCOUNT }}
-          AVA_CONTAINER:      ${{ inputs.AVATARS_CONTAINER }}
-          AVA_PUBLIC_BASE:    ${{ inputs.AVATARS_PUBLIC_BASE }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           set -eo pipefail
 
@@ -150,10 +96,7 @@ jobs:
             "WEBSITE_RUN_FROM_PACKAGE": "1",
             "PYTHONPATH": "/home/site/wwwroot/.python_packages/lib/site-packages",
             "JWT_SECRET": "$JWT_SECRET",
-            "USERS_CONTAINER": "users",
-            "AVATAR_STORAGE_ACCOUNT_NAME": "${AVA_ACCOUNT}",
-            "AVATAR_CONTAINER_NAME": "${AVA_CONTAINER}",
-            "AVATAR_PUBLIC_BASE": "${AVA_PUBLIC_BASE}"
+            "USERS_CONTAINER": "users"
           }
           JSON
 
