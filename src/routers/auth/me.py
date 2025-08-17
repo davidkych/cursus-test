@@ -4,185 +4,145 @@ from pydantic import BaseModel, EmailStr
 from typing import Optional, Literal, Any, Dict
 from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, generate_blob_sas, BlobSasPermissions
 import os, datetime, jwt
 
 # ⟨NEW⟩ shared defaults for user flags
 from .common import apply_default_user_flags
+# ⟨NEW⟩ short-lived SAS generator for custom avatars
+from ._blob import mint_read_sas_url
 
 # ───────────────────────── Cosmos setup ──────────────────────────
 _cosmos_endpoint = os.environ["COSMOS_ENDPOINT"]
-_database_name   = os.getenv("COSMOS_DATABASE")
+_database_name = os.getenv("COSMOS_DATABASE")
 _users_container = os.getenv("USERS_CONTAINER", "users")
-_jwt_secret      = os.getenv("JWT_SECRET", "change-me")
+_jwt_secret = os.getenv("JWT_SECRET", "change-me")
 
-_client = CosmosClient(
-    _cosmos_endpoint,
-    credential=DefaultAzureCredential()
-)
+_client = CosmosClient(_cosmos_endpoint, credential=DefaultAzureCredential())
 _users = _client.get_database_client(_database_name).get_container_client(_users_container)
 
-# ───────────────────────── Images Storage (for SAS) ──────────────  ⟨NEW⟩
-_images_account   = os.getenv("IMAGES_ACCOUNT_NAME", "")
-_images_container = os.getenv("IMAGES_CONTAINER", "avatars")
-_images_blob_ep   = os.getenv("IMAGES_BLOB_ENDPOINT") or (f"https://{_images_account}.blob.core.windows.net/" if _images_account else "")
-
-# Normalize endpoint
-if _images_blob_ep and not _images_blob_ep.endswith("/"):
-    _images_blob_ep += "/"
-
-# Blob client (MSI)
-_blob_service: Optional[BlobServiceClient] = None
-if _images_account:
-    _blob_service = BlobServiceClient(
-        account_url=f"https://{_images_account}.blob.core.windows.net",
-        credential=DefaultAzureCredential()
-    )
-
-def _make_read_sas_url(blob_name: str, minutes: int = 60) -> Optional[Dict[str, str]]:
-    """
-    Create a short-lived user-delegation SAS URL to read the avatar blob.
-    Returns None if images storage is not configured.
-    """
-    if not (_blob_service and _images_account and _images_blob_ep):
-        return None
-    now = datetime.datetime.utcnow()
-    start = now - datetime.timedelta(minutes=5)
-    expiry = now + datetime.timedelta(minutes=minutes)
-    udk = _blob_service.get_user_delegation_key(key_start_time=start, key_expiry_time=expiry)
-    sas = generate_blob_sas(
-        account_name=_images_account,
-        container_name=_images_container,
-        blob_name=blob_name,
-        user_delegation_key=udk,
-        permission=BlobSasPermissions(read=True),
-        start=start,
-        expiry=expiry,
-    )
-    return {
-        "url": f"{_images_blob_ep}{_images_container}/{blob_name}?{sas}",
-        "expiresAt": expiry.replace(microsecond=0).isoformat() + "Z",
-    }
-
 # ────────────────────────── Response models ───────────────────────
+
 class LoginContext(BaseModel):
-    # All optional; we only return what we have
-    last_login_utc: Optional[datetime.datetime] = None
-    ip: Optional[str] = None
-    ua: Optional[Dict[str, Any]] = None          # parsed UA (browser/os/device flags)
-    locale: Optional[Dict[str, Optional[str]]] = None  # client + accept_language
-    timezone: Optional[str] = None
-    geo: Optional[Dict[str, Any]] = None         # { country_iso2, source }
+  # All optional; we only return what we have
+  last_login_utc: Optional[datetime.datetime] = None
+  ip: Optional[str] = None
+  ua: Optional[Dict[str, Any]] = None  # parsed UA (browser/os/device flags)
+  locale: Optional[Dict[str, Optional[str]]] = None  # client + accept_language
+  timezone: Optional[str] = None
+  geo: Optional[Dict[str, Any]] = None  # { country_iso2, source }
 
 class UserMeOut(BaseModel):
-    id: str
-    username: str
-    email: EmailStr
-    created: datetime.datetime
+  id: str
+  username: str
+  email: EmailStr
+  created: datetime.datetime
 
-    # Extended profile fields (optional for forward compatibility)
-    gender: Optional[Literal["male", "female"]] = None
-    dob: Optional[datetime.date] = None
-    country: Optional[str] = None
-    profile_pic_id: Optional[int] = 1
-    profile_pic_type: Optional[Literal["default", "custom"]] = "default"
+  # Extended profile fields (optional for forward compatibility)
+  gender: Optional[Literal["male", "female"]] = None
+  dob: Optional[datetime.date] = None
+  country: Optional[str] = None
+  profile_pic_id: Optional[int] = 1
+  profile_pic_type: Optional[Literal["default", "custom"]] = "default"
 
-    # ⟨NEW⟩ account flags (default False for backward compatibility)
-    is_admin: bool = False
-    is_premium_member: bool = False
+  # ⟨NEW⟩ optional short-lived SAS URL for custom avatars
+  avatar_url: Optional[str] = None
 
-    # ⟨NEW⟩ latest login telemetry snapshot (optional)
-    login_context: Optional[LoginContext] = None
+  # ⟨NEW⟩ account flags (default False for backward compatibility)
+  is_admin: bool = False
+  is_premium_member: bool = False
 
-    # ⟨NEW⟩ ephemeral URL to load custom avatar (SAS; omitted if default)
-    avatar_url: Optional[str] = None
+  # ⟨NEW⟩ latest login telemetry snapshot (optional)
+  login_context: Optional[LoginContext] = None
 
 # ──────────────────────────── Helpers ────────────────────────────
+
 def _extract_bearer_token(req: Request) -> str:
-    auth = req.headers.get("Authorization", "")
-    if not auth.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
-    return auth.split(" ", 1)[1].strip()
+  auth = req.headers.get("Authorization", "")
+  if not auth.lower().startswith("bearer "):
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+  return auth.split(" ", 1)[1].strip()
 
 def _decode_jwt(token: str) -> str:
-    try:
-        payload = jwt.decode(token, _jwt_secret, algorithms=["HS256"])
-        sub = payload.get("sub")
-        if not sub:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token (no subject)")
-        return sub
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+  try:
+    payload = jwt.decode(token, _jwt_secret, algorithms=["HS256"])
+    sub = payload.get("sub")
+    if not sub:
+      raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token (no subject)")
+    return sub
+  except jwt.ExpiredSignatureError:
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+  except jwt.InvalidTokenError:
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 def _get_user_by_username(username: str):
-    """Fast point-read via id == partition key (/username)."""
-    try:
-        return _users.read_item(item=username, partition_key=username)
-    except exceptions.CosmosResourceNotFoundError:
-        return None
+  """Fast point-read via id == partition key (/username)."""
+  try:
+    return _users.read_item(item=username, partition_key=username)
+  except exceptions.CosmosResourceNotFoundError:
+    return None
 
 # ──────────────────────────── Router ────────────────────────────
+
 router = APIRouter(
-    prefix="/api/auth",
-    tags=["auth"]
+  prefix="/api/auth",
+  tags=["auth"]
 )
 
 @router.get("/me", response_model=UserMeOut)
 def me(request: Request):
-    """
-    Current-user profile endpoint.
-    Requires: Authorization: Bearer <JWT>  (HS256 signed with JWT_SECRET).
-    Returns extended 'login_context' (latest snapshot), new flags,
-    and (if custom avatar exists) a short-lived SAS 'avatar_url'.
-    """
-    token = _extract_bearer_token(request)
-    username = _decode_jwt(token)
+  """
+  Current-user profile endpoint.
 
-    doc = _get_user_by_username(username)
-    if not doc:
-        # token is valid but user doc is gone → treat as unauthorized
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+  Returns extended 'login_context' and the 'is_admin' / 'is_premium_member' flags.
+  If profile_pic_type == "custom", also returns a short-lived read SAS in `avatar_url`.
+  """
+  token = _extract_bearer_token(request)
+  username = _decode_jwt(token)
 
-    # ⟨NEW⟩ ensure flags exist (in-memory defaults for response)
-    missing_flags = ("is_admin" not in doc) or ("is_premium_member" not in doc)
-    apply_default_user_flags(doc)
+  doc = _get_user_by_username(username)
+  if not doc:
+    # token is valid but user doc is gone → treat as unauthorized
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-    # Build a safe profile payload (omit hashed password, etc.)
-    # Note: pydantic will coerce ISO strings (created/dob) into datetime/date.
-    payload: Dict[str, Any] = {
-        "id":               doc.get("id") or username,
-        "username":         doc.get("username") or username,
-        "email":            doc.get("email"),
-        "created":          doc.get("created"),
-        "gender":           doc.get("gender"),
-        "dob":              doc.get("dob"),
-        "country":          doc.get("country"),
-        "profile_pic_id":   int(doc.get("profile_pic_id", 1)),
-        "profile_pic_type": doc.get("profile_pic_type", "default"),
-        # ⟨NEW⟩ flags included in response (default False)
-        "is_admin":          bool(doc.get("is_admin", False)),
-        "is_premium_member": bool(doc.get("is_premium_member", False)),
-    }
+  # ⟨NEW⟩ ensure flags exist (in-memory defaults for response)
+  missing_flags = ("is_admin" not in doc) or ("is_premium_member" not in doc)
+  apply_default_user_flags(doc)
 
-    # ⟨NEW⟩ latest login telemetry snapshot (optional)
-    if "login_context" in doc and isinstance(doc["login_context"], dict):
-        payload["login_context"] = doc["login_context"]
+  # Build a safe profile payload (omit hashed password, etc.)
+  # Note: pydantic will coerce ISO strings (created/dob) into datetime/date.
+  payload: Dict[str, Any] = {
+    "id": doc.get("id") or username,
+    "username": doc.get("username") or username,
+    "email": doc.get("email"),
+    "created": doc.get("created"),
+    "gender": doc.get("gender"),
+    "dob": doc.get("dob"),
+    "country": doc.get("country"),
+    "profile_pic_id": int(doc.get("profile_pic_id", 1)),
+    "profile_pic_type": doc.get("profile_pic_type", "default"),
+    # ⟨NEW⟩ flags included in response (default False)
+    "is_admin": bool(doc.get("is_admin", False)),
+    "is_premium_member": bool(doc.get("is_premium_member", False)),
+  }
 
-    # ⟨NEW⟩ Provide a short-lived SAS URL if a custom avatar exists
-    if doc.get("profile_pic_type") == "custom" and doc.get("avatar_blob"):
-        sas = _make_read_sas_url(str(doc["avatar_blob"]), minutes=60)
-        if sas:
-            # Cache-bust by appending a unix ts param, while SAS already has its own querystring.
-            payload["avatar_url"] = f'{sas["url"]}&v={int(datetime.datetime.utcnow().timestamp())}'
+  # ⟨NEW⟩ latest login telemetry snapshot (optional)
+  if "login_context" in doc and isinstance(doc["login_context"], dict):
+    payload["login_context"] = doc["login_context"]
 
-    # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
-    if missing_flags:
-        try:
-            _users.upsert_item(doc)
-        except Exception:
-            # Never fail the /me call because of persistence issues
-            pass
+  # ⟨NEW⟩ Short-lived SAS URL for custom avatars (5-minute default)
+  try:
+    if payload.get("profile_pic_type") == "custom":
+      payload["avatar_url"] = mint_read_sas_url(username=username, minutes=5)
+  except Exception:
+    # Do not fail /me if SAS minting fails; just omit the URL.
+    pass
 
-    return payload
+  # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
+  if missing_flags:
+    try:
+      _users.upsert_item(doc)
+    except Exception:
+      # Never fail the /me call because of persistence issues
+      pass
+
+  return payload

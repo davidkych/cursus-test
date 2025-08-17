@@ -1,192 +1,177 @@
 # ── src/routers/auth/avatar.py ────────────────────────────────────────────────
-from fastapi import APIRouter, HTTPException, status, Request, UploadFile, File
+"""
+Premium/custom avatar upload endpoint.
+
+Rules:
+- Only authenticated users (Bearer JWT).
+- Non-admins must be premium members to upload.
+- Non-admin uploads must be image/jpeg or image/png AND < 512 KiB.
+- Admins have no size/type limits (still stored as-is; Content-Type is set accordingly).
+- Upload overwrites the existing avatar blob deterministically at: avatars/<username>.
+- On success, marks the user's profile as `profile_pic_type = "custom"` and records
+  `avatar_updated_utc` (ISO-8601) for traceability.
+
+`/api/auth/me` is responsible for returning a short-lived SAS URL (`avatar_url`)
+when `profile_pic_type == "custom"`.
+"""
+
+from __future__ import annotations
+
+import os
+import datetime as dt
+from typing import Any, Dict
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Request, status
 from pydantic import BaseModel
-from typing import Optional, Any, Dict, List
 from azure.identity import DefaultAzureCredential
 from azure.cosmos import CosmosClient, exceptions
-from azure.storage.blob import (
-    BlobServiceClient,
-    ContentSettings,
-    BlobSasPermissions,
-    generate_blob_sas,
-)
-import os, io, datetime as dt, jwt
+import jwt
 
-# ───────────────────────── Environment / config ─────────────────────────
-_cosmos_endpoint   = os.environ["COSMOS_ENDPOINT"]
-_database_name     = os.getenv("COSMOS_DATABASE")
-_users_container   = os.getenv("USERS_CONTAINER", "users")
+from ._blob import upload_overwrite  # same package (auth)
+from .common import apply_default_user_flags  # ensure flags exist if missing
 
-_images_account    = os.getenv("IMAGES_ACCOUNT_NAME")
-_images_container  = os.getenv("IMAGES_CONTAINER", "avatars")
-_images_blob_ep    = os.getenv("IMAGES_BLOB_ENDPOINT") or f"https://{_images_account}.blob.core.windows.net/"
+# ─────────────────────────── config / clients ───────────────────────────
 
-_avatar_max_kib    = int(os.getenv("AVATAR_MAX_KIB", "512"))
-_avatar_types_csv  = os.getenv("AVATAR_ALLOWED_TYPES", "image/jpeg,image/jpg,image/png")
-_avatar_types      = [t.strip().lower() for t in _avatar_types_csv.split(",") if t.strip()]
-_require_premium   = os.getenv("AVATAR_REQUIRE_PREMIUM", "1") == "1"
+_COSMOS_ENDPOINT = os.environ["COSMOS_ENDPOINT"]
+_DB_NAME = os.getenv("COSMOS_DATABASE")
+_USERS_CONTAINER = os.getenv("USERS_CONTAINER", "users")
+_JWT_SECRET = os.getenv("JWT_SECRET", "change-me")
 
-_jwt_secret        = os.getenv("JWT_SECRET", "change-me")
+_cosmos = CosmosClient(_COSMOS_ENDPOINT, credential=DefaultAzureCredential())
+_users = _cosmos.get_database_client(_DB_NAME).get_container_client(_USERS_CONTAINER)
 
-# Normalize blob base URL (ensure trailing slash)
-if not _images_blob_ep.endswith("/"):
-    _images_blob_ep += "/"
+# 512 KiB limit for premium members
+_PREMIUM_MAX_BYTES = 512 * 1024
+# Allowed MIME types for premium members
+_PREMIUM_ALLOWED_TYPES = {"image/jpeg", "image/png"}
 
-# ───────────────────────── Clients (MSI) ─────────────────────────────
-_cred = DefaultAzureCredential()
-_cosmos_client = CosmosClient(_cosmos_endpoint, credential=_cred)
-_users = _cosmos_client.get_database_client(_database_name).get_container_client(_users_container)
 
-_blob_service = BlobServiceClient(account_url=f"https://{_images_account}.blob.core.windows.net", credential=_cred)
-_container_client = _blob_service.get_container_client(_images_container)
+# ─────────────────────────── helpers ───────────────────────────
 
-# ───────────────────────── Auth helpers ──────────────────────────────
 def _extract_bearer_token(req: Request) -> str:
     auth = req.headers.get("Authorization", "")
     if not auth.lower().startswith("bearer "):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token"
+        )
     return auth.split(" ", 1)[1].strip()
+
 
 def _decode_jwt_subject(token: str) -> str:
     try:
-        payload = jwt.decode(token, _jwt_secret, algorithms=["HS256"])
+        payload = jwt.decode(token, _JWT_SECRET, algorithms=["HS256"])
         sub = payload.get("sub")
         if not sub:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token (no subject)")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token (no subject)",
+            )
         return sub
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expired"
+        )
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+        )
 
-def _get_user(username: str) -> Optional[Dict[str, Any]]:
+
+def _get_user(username: str) -> Dict[str, Any] | None:
     try:
         return _users.read_item(item=username, partition_key=username)
     except exceptions.CosmosResourceNotFoundError:
         return None
 
-# ───────────────────────── SAS helper ───────────────────────────────
-def _make_read_sas_url(blob_name: str, minutes: int = 60) -> Dict[str, str]:
+
+def _persist_user(doc: Dict[str, Any]) -> None:
+    # Upsert is idempotent; keep it simple
+    _users.upsert_item(doc)
+
+
+# ─────────────────────────── router ───────────────────────────
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+class UploadResult(BaseModel):
+    ok: bool = True
+    # Optionally we could add: avatar_updated_utc: datetime, size: int, content_type: str
+
+
+@router.post("/avatar", response_model=UploadResult, status_code=status.HTTP_200_OK)
+async def upload_avatar(request: Request, file: UploadFile = File(...)) -> UploadResult:
     """
-    Create a user-delegation SAS URL (MSI-based) to read a single blob.
+    Upload (and overwrite) the current user's avatar.
+
+    Security / policy:
+    - Admins: no limits.
+    - Premium members: only JPEG/PNG, < 512 KiB.
+    - Others: forbidden.
     """
-    now = dt.datetime.utcnow()
-    start = now - dt.timedelta(minutes=5)         # clock skew tolerance
-    expiry = now + dt.timedelta(minutes=minutes)
-
-    udk = _blob_service.get_user_delegation_key(key_start_time=start, key_expiry_time=expiry)
-
-    sas = generate_blob_sas(
-        account_name=_images_account,
-        container_name=_images_container,
-        blob_name=blob_name,
-        user_delegation_key=udk,
-        permission=BlobSasPermissions(read=True),
-        expiry=expiry,
-        start=start,
-    )
-    return {
-        "url": f"{_images_blob_ep}{_images_container}/{blob_name}?{sas}",
-        "expiresAt": expiry.replace(microsecond=0).isoformat() + "Z",
-    }
-
-# ───────────────────────── Router ────────────────────────────────────
-router = APIRouter(
-    prefix="/api/auth",
-    tags=["auth"]
-)
-
-# Response model for SAS URL
-class AvatarUrlOut(BaseModel):
-    url: str
-    expiresAt: str
-
-# ───────────────────────── Upload endpoint ───────────────────────────
-@router.post("/avatar", status_code=status.HTTP_204_NO_CONTENT)
-async def upload_avatar(request: Request, file: UploadFile = File(...)):
-    """
-    Upload/replace the caller's avatar.
-
-    Rules:
-    - Admins: no type/size limit.
-    - Otherwise (premium required): content-type must be in AVATAR_ALLOWED_TYPES; size < AVATAR_MAX_KIB.
-    - Overwrites previous avatar.
-    - Stores metadata on the user document: profile_pic_type='custom', avatar_blob='avatars/<username>'
-    """
-    if not file or not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
-
-    # Identify caller
+    # Authenticate
     token = _extract_bearer_token(request)
     username = _decode_jwt_subject(token)
+
+    # Load user doc
     doc = _get_user(username)
     if not doc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
+        )
 
+    # Ensure default flags for consistent reads
+    apply_default_user_flags(doc)
     is_admin = bool(doc.get("is_admin", False))
     is_premium = bool(doc.get("is_premium_member", False))
 
-    # Gate: premium or admin
-    if _require_premium and (not is_admin) and (not is_premium):
-        raise HTTPException(status_code=403, detail="Premium membership required to upload avatar")
-
-    # Validate for non-admin
-    content_type = (file.content_type or "").lower()
-    if not is_admin:
-        if content_type not in _avatar_types:
-            raise HTTPException(status_code=415, detail=f"Unsupported media type: {content_type}")
-        # Enforce size by reading into memory up to limit+1
-        max_bytes = _avatar_max_kib * 1024
-        data = await file.read()  # small (<512KiB) okay to buffer
-        if len(data) > max_bytes:
-            raise HTTPException(status_code=413, detail=f"File too large (max {_avatar_max_kib} KiB)")
-        data_stream = io.BytesIO(data)
-    else:
-        # Admin: stream directly (no limits)
-        data_stream = file.file
-
-    # Blob name (no extension needed; content-type is preserved)
-    blob_name = f"{username}"
-
-    try:
-        _container_client.upload_blob(
-            name=blob_name,
-            data=data_stream,
-            overwrite=True,
-            content_settings=ContentSettings(content_type=content_type or "application/octet-stream"),
+    # Authorization gate
+    if not (is_admin or is_premium):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Premium membership required for custom avatar",
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
 
-    # Update user document to point to custom avatar
-    doc["profile_pic_type"] = "custom"
-    doc["avatar_blob"] = blob_name
-
+    # Read the entire payload into memory (avatars are small)
     try:
-        _users.upsert_item(doc)
+        content = await file.read()
+    finally:
+        await file.close()
+
+    content_type = (file.content_type or "").lower().strip()
+
+    if not is_admin:
+        # Enforce premium limits
+        if content_type not in _PREMIUM_ALLOWED_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Only JPEG/PNG are allowed for custom avatars",
+            )
+        if len(content) > _PREMIUM_MAX_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail="Avatar exceeds 512 KiB limit",
+            )
+    # For admins, accept any content_type/size as-is.
+
+    # Upload/overwrite to blob storage
+    try:
+        upload_overwrite(username=username, data=content, content_type=content_type or None)
+    except Exception as e:
+        # Avoid leaking storage details
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to store avatar",
+        ) from e
+
+    # Persist profile flag & timestamp (does not touch unrelated fields)
+    doc["profile_pic_type"] = "custom"
+    doc["avatar_updated_utc"] = dt.datetime.utcnow().isoformat()
+    try:
+        _persist_user(doc)
     except Exception:
-        # Do not fail the upload if metadata write has an issue
+        # Don’t fail the API if storage succeeded; the next /me will still
+        # return a SAS (since type is already "custom" in-memory).
         pass
 
-    return  # 204
-
-# ───────────────────────── SAS URL endpoint ─────────────────────────
-@router.get("/avatar/url", response_model=AvatarUrlOut)
-def get_avatar_sas_url(request: Request):
-    """
-    Return a short-lived SAS URL for the caller's avatar.
-    404 if the user has not uploaded a custom avatar yet.
-    """
-    token = _extract_bearer_token(request)
-    username = _decode_jwt_subject(token)
-    doc = _get_user(username)
-    if not doc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
-
-    if doc.get("profile_pic_type") != "custom" or not doc.get("avatar_blob"):
-        raise HTTPException(status_code=404, detail="No custom avatar")
-
-    try:
-        return _make_read_sas_url(doc["avatar_blob"], minutes=60)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create SAS URL: {e}")
+    return UploadResult(ok=True)

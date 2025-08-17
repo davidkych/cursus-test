@@ -4,7 +4,7 @@ name: Infra Reusable
 on:
   workflow_call:
     inputs:
-      PREFIX:    { required: true, type: string }   # ← single source of truth
+      PREFIX:    { required: true, type: string }   # ← NEW
       LOCATION:  { required: true, type: string }
       PLAN_SKU:  { required: true, type: string }
       TIMEOUT:   { required: true, type: number }
@@ -27,19 +27,6 @@ on:
       static_site:
         description: 'Static Web App name'
         value: ${{ jobs.provision.outputs.static_site }}
-      # ⟨NEW⟩ images storage outputs
-      images_account_name:
-        description: 'Images Storage Account name'
-        value: ${{ jobs.provision.outputs.images_account_name }}
-      images_account_id:
-        description: 'Images Storage Account resource ID'
-        value: ${{ jobs.provision.outputs.images_account_id }}
-      avatars_container_name:
-        description: 'Avatars container name'
-        value: ${{ jobs.provision.outputs.avatars_container_name }}
-      images_blob_endpoint:
-        description: 'Images blob endpoint (https://<acct>.blob.core.windows.net/)'
-        value: ${{ jobs.provision.outputs.images_blob_endpoint }}
 
 jobs:
   provision:
@@ -53,11 +40,6 @@ jobs:
       cosmos:      ${{ steps.infra.outputs.cosmos }}
       sched_func:  ${{ steps.infra.outputs.sched_func }}
       static_site: ${{ steps.infra.outputs.static_site }}
-      # ⟨NEW⟩ images storage
-      images_account_name:    ${{ steps.infra.outputs.images_account_name }}
-      images_account_id:      ${{ steps.infra.outputs.images_account_id }}
-      avatars_container_name: ${{ steps.infra.outputs.avatars_container_name }}
-      images_blob_endpoint:   ${{ steps.infra.outputs.images_blob_endpoint }}
 
     steps:
       - uses: actions/checkout@v3
@@ -144,24 +126,9 @@ jobs:
           APP=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
                      --query "properties.outputs.webAppName.value" -o tsv)
 
-          # ⟨NEW⟩ images outputs
-          IMG_ACCT=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
-                       --query "properties.outputs.imagesAccountName.value" -o tsv)
-          IMG_ID=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
-                       --query "properties.outputs.imagesAccountId.value" -o tsv)
-          AVATARS=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
-                       --query "properties.outputs.avatarsContainerName.value" -o tsv)
-          IMG_BLOB=$(az deployment group show -g "$RG" -n $DEPLOY_NAME \
-                       --query "properties.outputs.imagesBlobEndpoint.value" -o tsv)
-
           echo "cosmos=$COSMOS"      >> $GITHUB_OUTPUT
           echo "sched_func=$SCHED"   >> $GITHUB_OUTPUT
           echo "static_site=$STATIC" >> $GITHUB_OUTPUT
           echo "app=$APP"            >> $GITHUB_OUTPUT
 
-          echo "images_account_name=$IMG_ACCT"       >> $GITHUB_OUTPUT
-          echo "images_account_id=$IMG_ID"           >> $GITHUB_OUTPUT
-          echo "avatars_container_name=$AVATARS"     >> $GITHUB_OUTPUT
-          echo "images_blob_endpoint=$IMG_BLOB"      >> $GITHUB_OUTPUT
-
-          echo "🏗 infra ready – rg=$RG, app=$APP, cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC, images=$IMG_ACCT"
+          echo "🏗 infra ready – rg=$RG, app=$APP, cosmos=$COSMOS, scheduler=$SCHED, static_site=$STATIC"

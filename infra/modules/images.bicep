@@ -1,21 +1,28 @@
 // infra/modules/images.bicep
+// Dedicated Storage Account for images (e.g., avatars). Private by default.
+//
+// Notes:
+// - No public access; HTTPS only.
+// - Container `avatars` is private (no anonymous list/read).
+// - We do NOT grant any roles here; wire MSI role assignments in main.bicep
+//   where the Web App principal is known.
+
 targetScope = 'resourceGroup'
 
 @description('Azure region')
 param location string
 
-@description('Images Storage Account name (globally unique, lowercase, 3–24 chars)')
+@description('Globally unique Storage Account name (lowercase, 3–24 alphanum).')
 param imagesAccountName string
 
-@description('Blob container for user avatars')
+@description('Blob container name for user avatars.')
+@minLength(3)
 param avatarsContainerName string = 'avatars'
 
-/*
-  Storage Account for private images (avatars now, expandable later)
-  - Standard_LRS, StorageV2
-  - HTTPS only, TLS1.2+, no public blob access
-*/
-resource imagesSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+// -----------------------------------------------------------------------------
+// Storage Account (general-purpose v2, Standard_LRS)
+// -----------------------------------------------------------------------------
+resource imagesAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   name: imagesAccountName
   location: location
   sku: {
@@ -24,19 +31,12 @@ resource imagesSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   kind: 'StorageV2'
   properties: {
     allowBlobPublicAccess: false
+    allowSharedKeyAccess: false         // prefer AAD (MSI) + user-delegation SAS
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
-    accessTier: 'Hot'
-    networkAcls: {
-      bypass: 'AzureServices'
-      defaultAction: 'Allow'
-    }
     encryption: {
       services: {
         blob: {
-          enabled: true
-        }
-        file: {
           enabled: true
         }
       }
@@ -45,25 +45,34 @@ resource imagesSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-// Blob service (default) using parent syntax
-resource blob 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
-  name: 'default'
-  parent: imagesSa
-}
-
-// Private container for avatars (parent syntax)
-resource avatars 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  name: avatarsContainerName
-  parent: blob
+// Default Blob service (parent for containers)
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
+  name: '${imagesAccount.name}/default'
   properties: {
-    publicAccess: 'None'
-    metadata: {
-      purpose: 'user-avatars'
-    }
+    // Keep defaults (e.g., no soft-delete tuning here). Can be extended later.
   }
 }
 
-output imagesAccountName     string = imagesSa.name
-output imagesAccountId       string = imagesSa.id
-output avatarsContainerName  string = avatars.name
-output blobEndpoint          string = imagesSa.properties.primaryEndpoints.blob
+// Private avatars container
+resource avatars 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
+  name: avatarsContainerName
+  parent: blobService
+  properties: {
+    publicAccess: 'None'   // private container
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Outputs
+// -----------------------------------------------------------------------------
+@description('Images Storage Account name')
+output imagesAccountName string = imagesAccount.name
+
+@description('Images Storage Account resource ID')
+output imagesAccountResourceId string = imagesAccount.id
+
+@description('Private container name for avatars')
+output avatarsContainerName string = avatars.name
+
+@description('Blob endpoint base URL (no trailing slash)')
+output blobEndpoint string = 'https://${imagesAccount.name}.blob.core.windows.net'

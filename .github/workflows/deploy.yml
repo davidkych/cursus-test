@@ -140,19 +140,6 @@ jobs:
       AZURE_CREDENTIALS:     ${{ secrets.AZURE_CREDENTIALS }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-  # ⟨NEW⟩ Images outputs commentary (useful for diagnostics)
-  images_info:
-    needs: [ changes, infra ]
-    if: ${{ needs.changes.outputs.run_infra == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Show images storage outputs
-        run: |
-          echo "🖼  Images Storage Account:  ${{ needs.infra.outputs.images_account_name }}"
-          echo "🆔 Images Account ID:       ${{ needs.infra.outputs.images_account_id }}"
-          echo "🗂  Avatars Container:      ${{ needs.infra.outputs.avatars_container_name }}"
-          echo "🌐 Blob Endpoint:           ${{ needs.infra.outputs.images_blob_endpoint }}"
-
   # ─────────────────────── resolve names if infra skipped ────────────────────
   resolve:
     name: Resolve resource names (no-infra)
