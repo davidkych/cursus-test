@@ -6,6 +6,13 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.identity import DefaultAzureCredential
 import os, datetime, jwt
 
+# ⟨NEW⟩ blob SAS helpers
+from azure.storage.blob import (
+    BlobServiceClient,
+    generate_blob_sas,
+    BlobSasPermissions,
+)
+
 # ⟨NEW⟩ shared defaults for user flags
 from .common import apply_default_user_flags
 
@@ -20,6 +27,17 @@ _client = CosmosClient(
     credential=DefaultAzureCredential()
 )
 _users = _client.get_database_client(_database_name).get_container_client(_users_container)
+
+# ───────────────────────── Blob config (optional) ─────────────────
+# If these are missing, we simply won't return avatar_sas_url (backward compatible).
+_IMAGES_ACCOUNT           = os.getenv("IMAGES_ACCOUNT")            # storage account *name*
+_AVATAR_SAS_TTL_MINUTES   = int(os.getenv("AVATAR_SAS_TTL_MINUTES", "5"))
+
+_BLOB_ENDPOINT: Optional[str] = None
+_blob_service: Optional[BlobServiceClient] = None
+if _IMAGES_ACCOUNT:
+    _BLOB_ENDPOINT = f"https://{_IMAGES_ACCOUNT}.blob.core.windows.net"
+    _blob_service  = BlobServiceClient(account_url=_BLOB_ENDPOINT, credential=DefaultAzureCredential())
 
 # ────────────────────────── Response models ───────────────────────
 class LoginContext(BaseModel):
@@ -51,6 +69,9 @@ class UserMeOut(BaseModel):
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     login_context: Optional[LoginContext] = None
 
+    # ⟨NEW⟩ short-lived read URL for the custom avatar (only when available)
+    avatar_sas_url: Optional[str] = None
+
 # ──────────────────────────── Helpers ────────────────────────────
 def _extract_bearer_token(req: Request) -> str:
     auth = req.headers.get("Authorization", "")
@@ -77,6 +98,44 @@ def _get_user_by_username(username: str):
     except exceptions.CosmosResourceNotFoundError:
         return None
 
+def _mint_avatar_read_sas(avatar_blob_path: str) -> Optional[str]:
+    """
+    Build a user-delegation SAS URL for the given blob path.
+    avatar_blob_path is expected to include the container prefix, e.g.:
+      'avatars/users/alice/avatar.jpg'
+    Returns an absolute URL or None on any issue.
+    """
+    try:
+        if not (_blob_service and _IMAGES_ACCOUNT and _BLOB_ENDPOINT and avatar_blob_path):
+            return None
+
+        # Split "container/dir/file" into container + blob name
+        if "/" not in avatar_blob_path:
+            return None
+        container, blob_name = avatar_blob_path.split("/", 1)
+
+        # Build time window (start slightly in the past to avoid clock skew)
+        now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc)
+        start  = now - datetime.timedelta(minutes=1)
+        expiry = now + datetime.timedelta(minutes=_AVATAR_SAS_TTL_MINUTES or 5)
+
+        # User delegation key + SAS (read-only)
+        udk = _blob_service.get_user_delegation_key(start, expiry)
+        sas = generate_blob_sas(
+            account_name=_IMAGES_ACCOUNT,
+            container_name=container,
+            blob_name=blob_name,
+            user_delegation_key=udk,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry,
+            start=start,
+        )
+
+        return f"{_BLOB_ENDPOINT}/{container}/{blob_name}?{sas}"
+    except Exception:
+        # Never fail /me because SAS minting had an issue
+        return None
+
 # ──────────────────────────── Router ────────────────────────────
 router = APIRouter(
     prefix="/api/auth",
@@ -91,6 +150,7 @@ def me(request: Request):
     Returns extended 'login_context' (latest snapshot) and the new
     'is_admin' / 'is_premium_member' flags. Missing flags default to False.
     Opportunistically persists defaults if flags were missing.
+    If a custom avatar exists, returns a short-lived 'avatar_sas_url'.
     """
     token = _extract_bearer_token(request)
     username = _decode_jwt(token)
@@ -124,6 +184,13 @@ def me(request: Request):
     # ⟨NEW⟩ latest login telemetry snapshot (optional)
     if "login_context" in doc and isinstance(doc["login_context"], dict):
         payload["login_context"] = doc["login_context"]
+
+    # ⟨NEW⟩ Mint a short-lived read SAS URL if custom avatar exists
+    if doc.get("profile_pic_type") == "custom":
+        avatar_blob_path = doc.get("avatar_blob")  # e.g. 'avatars/users/alice/avatar.jpg'
+        sas_url = _mint_avatar_read_sas(avatar_blob_path) if avatar_blob_path else None
+        if sas_url:
+            payload["avatar_sas_url"] = sas_url
 
     # ⟨NEW⟩ Opportunistic backfill: persist defaults if flags were missing
     if missing_flags:

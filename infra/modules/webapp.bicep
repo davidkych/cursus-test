@@ -49,6 +49,22 @@ param loginTelemetry string = '1'
 ])
 param geoipProvider string = 'azmaps'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ⟨NEW⟩ Image storage wiring (avatars & future media)
+// These are stamped as app settings for the API to upload and mint SAS.
+// ─────────────────────────────────────────────────────────────────────────────
+@description('Dedicated images storage account name (for avatars & media)')
+param imagesAccountName string
+
+@description('Private container name for avatars (default: "avatars")')
+param avatarContainer string = 'avatars'
+
+@description('Base path under the avatars container for user blobs (default: "users")')
+param avatarBasePath string = 'users'
+
+@description('SAS TTL in minutes for avatar read URLs returned by /me (default: 5)')
+param avatarSasTtlMinutes int = 5
+
 // ---------------------------------------------------------------------------
 // Derived values
 // ---------------------------------------------------------------------------
@@ -76,7 +92,7 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'COSMOS_ENDPOINT',                     value: cosmosEndpoint }
         { name: 'COSMOS_DATABASE',                     value: databaseName }
         { name: 'COSMOS_CONTAINER',                    value: containerName }
-        // ✨ NEW: Codes container name (kept configurable via app settings)
+        // ✨ Codes container name (kept configurable via app settings)
         { name: 'CODES_CONTAINER',                      value: 'codes' }
 
         // Scheduler wiring
@@ -87,6 +103,12 @@ resource app 'Microsoft.Web/sites@2023-01-01' = {
         { name: 'LOGIN_TELEMETRY',                     value: loginTelemetry }
         { name: 'GEOIP_PROVIDER',                      value: geoipProvider }
         { name: 'AZURE_MAPS_KEY',                      value: azureMapsKey }
+
+        // ⟨NEW⟩ Image storage wiring (avatars)
+        { name: 'IMAGES_ACCOUNT',                      value: imagesAccountName }
+        { name: 'AVATAR_CONTAINER',                    value: avatarContainer }
+        { name: 'AVATAR_BASE_PATH',                    value: avatarBasePath }
+        { name: 'AVATAR_SAS_TTL_MINUTES',              value: string(avatarSasTtlMinutes) }
       ]
     }
   }
@@ -122,3 +144,5 @@ resource auth 'Microsoft.Web/sites/config@2023-01-01' = {
 }
 
 output webAppName string = app.name
+// ⟨NEW⟩ Expose MSI principalId so the caller (main.bicep) can grant storage roles
+output webAppPrincipalId string = app.identity.principalId

@@ -58,7 +58,16 @@ module mapsModule './modules/maps.bicep' = {
   }
 }
 
-// 4) FastAPI Web-App ---------------------------------------------------------
+// 4) ✨ Images storage (private) ---------------------------------------------
+module imagesModule './modules/images.bicep' = {
+  name: 'images'
+  params: {
+    prefix:   prefix
+    location: location
+  }
+}
+
+// 5) FastAPI Web-App ---------------------------------------------------------
 module webAppModule './modules/webapp.bicep' = {
   name: 'webApp'
   params: {
@@ -78,11 +87,17 @@ module webAppModule './modules/webapp.bicep' = {
     // Optional: set defaults here so single deployment is enough
     loginTelemetry: '1'
     geoipProvider:  'azmaps'
+
+    // ⟨NEW⟩ Image storage wiring for avatars
+    imagesAccountName: imagesModule.outputs.imagesAccountNameOut
+    avatarContainer:   imagesModule.outputs.avatarsContainerNameOut
+    avatarBasePath:    'users'
+    avatarSasTtlMinutes: 5
   }
-  dependsOn: [ cosmosModule, planModule, mapsModule ]
+  dependsOn: [ cosmosModule, planModule, mapsModule, imagesModule ]
 }
 
-// 5) Durable Scheduler -------------------------------------------------------
+// 6) Durable Scheduler -------------------------------------------------------
 module schedulerModule './modules/scheduler.bicep' = {
   name: 'scheduler'
   params: {
@@ -97,7 +112,7 @@ module schedulerModule './modules/scheduler.bicep' = {
   dependsOn: [ cosmosModule, planModule ]
 }
 
-// 6) Static Web-App (Vue frontend) ------------------------------------------
+// 7) Static Web-App (Vue frontend) ------------------------------------------
 module staticWebModule './modules/staticweb.bicep' = {
   name: 'staticWeb'
   params: {
@@ -106,6 +121,45 @@ module staticWebModule './modules/staticweb.bicep' = {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// RBAC: grant Web-App MSI access to images storage (data-plane + SAS minting)
+// - Storage Blob Data Contributor (read/write blobs)
+// - Storage Blob Delegator (request user delegation keys for SAS)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// existing handle for the images storage account (for role scopes)
+resource imagesAccount 'Microsoft.Storage/storageAccounts@2023-01-01' existing = {
+  name: imagesModule.outputs.imagesAccountNameOut
+}
+
+// Role definition IDs (built-in):
+// Storage Blob Data Contributor: ba92f5b4-2d11-453d-a403-e96b0029c9fe
+// Storage Blob Delegator:       db58b8e5-c6ad-4a2a-8342-4190687cbf4a
+resource roleBlobDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(imagesAccount.id, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe', webAppModule.outputs.webAppPrincipalId)
+  scope: imagesAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+    principalId:      webAppModule.outputs.webAppPrincipalId
+    principalType:    'ServicePrincipal'
+  }
+  dependsOn: [ imagesModule, webAppModule ]
+}
+
+resource roleBlobDelegator 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(imagesAccount.id, 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a', webAppModule.outputs.webAppPrincipalId)
+  scope: imagesAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'db58b8e5-c6ad-4a2a-8342-4190687cbf4a')
+    principalId:      webAppModule.outputs.webAppPrincipalId
+    principalType:    'ServicePrincipal'
+  }
+  dependsOn: [ imagesModule, webAppModule ]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Outputs
+// ─────────────────────────────────────────────────────────────────────────────
 output cosmosAccountName     string = cosmosModule.outputs.cosmosAccountName
 output schedulerFunctionName string = schedulerModule.outputs.schedulerFunctionName
 output schedulerStorageName  string = schedulerModule.outputs.schedulerStorageName
@@ -113,3 +167,4 @@ output staticSiteHostname    string = staticWebModule.outputs.staticSiteHostname
 output staticSiteName        string = staticWebModule.outputs.staticSiteName
 output webAppName            string = webAppModule.outputs.webAppName    // ← existing
 output mapsAccountName       string = mapsModule.outputs.mapsAccountName // ← NEW (non-secret)
+output imagesAccountName     string = imagesModule.outputs.imagesAccountNameOut // ← NEW (non-secret)
