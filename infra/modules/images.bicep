@@ -7,7 +7,6 @@ param location string
 @description('Images Storage Account name (globally unique, lowercase, 3–24 chars)')
 param imagesAccountName string
 
-// Optional future-proofing: allow overriding container name, default to "avatars"
 @description('Blob container for user avatars')
 param avatarsContainerName string = 'avatars'
 
@@ -28,8 +27,6 @@ resource imagesSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
     minimumTlsVersion: 'TLS1_2'
     supportsHttpsTrafficOnly: true
     accessTier: 'Hot'
-    // Default network rules (public Internet allowed). If you later need
-    // private networking, add VNets and integrate the Web App accordingly.
     networkAcls: {
       bypass: 'AzureServices'
       defaultAction: 'Allow'
@@ -48,17 +45,16 @@ resource imagesSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
   }
 }
 
-// Blob service (implicit "default")
+// Blob service (default) using parent syntax
 resource blob 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = {
-  name: '${imagesSa.name}/default'
-  properties: {
-    // leave defaults
-  }
+  name: 'default'
+  parent: imagesSa
 }
 
-// Private container for avatars
+// Private container for avatars (parent syntax)
 resource avatars 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-01-01' = {
-  name: '${imagesSa.name}/${blob.name}/' + avatarsContainerName
+  name: avatarsContainerName
+  parent: blob
   properties: {
     publicAccess: 'None'
     metadata: {
@@ -69,5 +65,5 @@ resource avatars 'Microsoft.Storage/storageAccounts/blobServices/containers@2023
 
 output imagesAccountName     string = imagesSa.name
 output imagesAccountId       string = imagesSa.id
-output avatarsContainerName  string = avatarsContainerName
+output avatarsContainerName  string = avatars.name
 output blobEndpoint          string = imagesSa.properties.primaryEndpoints.blob
