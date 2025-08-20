@@ -69,7 +69,6 @@ jobs:
           RG:     ${{ inputs.RG }}
           APP:    ${{ inputs.APP }}
           COSMOS: ${{ inputs.COSMOS }}
-        shell: bash
         run: |
           set -eo pipefail
           principalId=$(az webapp identity show \
@@ -81,104 +80,27 @@ jobs:
 
           az cosmosdb sql role assignment create \
               --resource-group "$RG" --account-name "$COSMOS" \
-              --principal-id "$principalId" --role-definition-id "$roleId" --scope "/" || true
+              --principal-id "$principalId" --role-definition-id "$roleId" --scope "/"
 
       # ── MSI → Storage RBAC (images) ---------------------------------------
-      # FIX: make idempotent, verify with retries, and fail fast if missing.
-      - name: Ensure Storage Blob Data Contributor for Web-App MSI (images)
+      - name: Grant Storage Blob Data Contributor to Web-App MSI (images)
         env:
           RG:     ${{ inputs.RG }}
           APP:    ${{ inputs.APP }}
           IMAGES: ${{ inputs.IMAGES }}
-        shell: bash
         run: |
-          set -euo pipefail
-
+          set -eo pipefail
           principalId=$(az webapp identity show \
               --resource-group "$RG" --name "$APP" --query principalId -o tsv)
-          if [[ -z "$principalId" ]]; then
-            echo "Missing Web App system-assigned identity principalId"; exit 1
-          fi
 
           scope=$(az storage account show \
               --resource-group "$RG" --name "$IMAGES" --query id -o tsv)
-          if [[ -z "$scope" ]]; then
-            echo "Could not resolve storage account scope for $IMAGES"; exit 1
-          fi
 
-          # Idempotent grant: create only if not already present
-          has_role=$(az role assignment list \
-              --assignee "$principalId" --scope "$scope" --include-inherited \
-              --query "[?roleDefinitionName=='Storage Blob Data Contributor'] | length(@)" -o tsv)
-
-          if [[ "${has_role:-0}" -lt 1 ]]; then
-            echo "Assigning 'Storage Blob Data Contributor' to MSI on $scope ..."
-            az role assignment create \
+          # Idempotent: ignore if role exists already
+          az role assignment create \
               --assignee "$principalId" \
               --role "Storage Blob Data Contributor" \
-              --scope "$scope"
-          else
-            echo "Role already present."
-          fi
-
-          # Verify with retries (RBAC propagation)
-          for i in {1..24}; do
-            count=$(az role assignment list \
-              --assignee "$principalId" --scope "$scope" --include-inherited \
-              --query "[?roleDefinitionName=='Storage Blob Data Contributor'] | length(@)" -o tsv)
-            if [[ "${count:-0}" -ge 1 ]]; then
-              echo "✅ Verified Storage Blob Data Contributor assignment is visible."; break
-            fi
-            echo "⌛ Waiting for RBAC propagation ($i/24) …"; sleep 5
-          done
-
-          if [[ "${count:-0}" -lt 1 ]]; then
-            echo "❌ Storage Blob Data Contributor not visible after retries"; exit 1
-          fi
-
-      # ── MSI → Storage RBAC (Delegator for SAS in /me) ----------------------
-      - name: Ensure Storage Blob Data Delegator for Web-App MSI (images)  # optional but recommended
-        env:
-          RG:     ${{ inputs.RG }}
-          APP:    ${{ inputs.APP }}
-          IMAGES: ${{ inputs.IMAGES }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          principalId=$(az webapp identity show \
-              --resource-group "$RG" --name "$APP" --query principalId -o tsv)
-          scope=$(az storage account show \
-              --resource-group "$RG" --name "$IMAGES" --query id -o tsv)
-
-          has_delegator=$(az role assignment list \
-              --assignee "$principalId" --scope "$scope" --include-inherited \
-              --query "[?roleDefinitionName=='Storage Blob Data Delegator' || roleDefinitionName=='Storage Blob Data Owner'] | length(@)" -o tsv)
-
-          if [[ "${has_delegator:-0}" -lt 1 ]]; then
-            echo "Assigning 'Storage Blob Data Delegator' to MSI on $scope ..."
-            az role assignment create \
-              --assignee "$principalId" \
-              --role "Storage Blob Data Delegator" \
-              --scope "$scope"
-          else
-            echo "Delegator/Owner already present."
-          fi
-
-          # Verify with retries
-          for i in {1..24}; do
-            count=$(az role assignment list \
-              --assignee "$principalId" --scope "$scope" --include-inherited \
-              --query "[?roleDefinitionName=='Storage Blob Data Delegator' || roleDefinitionName=='Storage Blob Data Owner'] | length(@)" -o tsv)
-            if [[ "${count:-0}" -ge 1 ]]; then
-              echo "✅ Verified Delegator/Owner assignment is visible."; break
-            fi
-            echo "⌛ Waiting for RBAC propagation ($i/24) …"; sleep 5
-          done
-
-          if [[ "${count:-0}" -lt 1 ]]; then
-            echo "❌ Storage Blob Data Delegator not visible after retries"; exit 1
-          fi
+              --scope "$scope" || true
 
       # ── App settings: set ONLY deltas; leave infra-owned values to Bicep ---
       - name: Configure Web-App settings (secrets & runtime only)
