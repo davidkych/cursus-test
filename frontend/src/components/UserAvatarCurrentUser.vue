@@ -3,10 +3,16 @@ import { useAuth } from '@/stores/auth.js'
 import UserAvatar from '@/components/UserAvatar.vue'
 
 /**
- * Switch from main store (sample data) to real auth store.
- * Keeps the external API of this wrapper the same: it still renders <UserAvatar>
- * and forwards slots, but sources the current user's name & avatar from auth.
+ * Size in px for the rendered avatar.
+ * Default keeps the top-bar avatar small (tweak if your original was different).
  */
+const props = defineProps({
+  size: {
+    type: [Number, String],
+    default: 40, // original top-bar size (adjust if your theme used e.g. 36 or 48)
+  },
+})
+
 const auth = useAuth()
 </script>
 
@@ -14,6 +20,7 @@ const auth = useAuth()
   <UserAvatar
     :username="auth.displayName || 'Guest'"
     :avatar="auth.avatarUrl"
+    :size="size"
   >
     <slot />
   </UserAvatar>

@@ -45,7 +45,8 @@ const isPremium = computed(() => !!auth.user?.is_premium_member)
 <template>
   <CardBox>
     <BaseLevel type="justify-around lg:justify-center">
-      <UserAvatarCurrentUser class="lg:mx-12" />
+      <!-- Force the Howdy avatar to 256x256 while keeping top-bar avatars small -->
+      <UserAvatarCurrentUser :size="256" class="lg:mx-12" />
       <div class="space-y-3 text-center md:text-left lg:mx-12">
         <div class="flex justify-center md:block">
           <FormCheckRadio
