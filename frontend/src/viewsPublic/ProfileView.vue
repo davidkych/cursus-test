@@ -204,42 +204,6 @@ async function submitAvatarUpload() {
 
       <UserCard class="mb-6" />
 
-      <!-- ⟨NEW⟩ Redeem code (left, after avatar) -->
-      <div class="mb-6">
-        <CardBox class="max-w-md" is-form @submit.prevent="submitRedeem">
-          <template v-if="redeemError">
-            <div class="mb-3 text-sm text-red-600">
-              {{ redeemError }}
-            </div>
-          </template>
-          <template v-if="redeemSuccess && !redeemError">
-            <div class="mb-3 text-sm text-green-600">
-              {{ redeemSuccess }}
-            </div>
-          </template>
-
-          <FormField label="Redeem code" help="Case-sensitive">
-            <FormControl
-              v-model="redeemForm.code"
-              name="redeem_code"
-              placeholder="Enter your code"
-              required
-            />
-          </FormField>
-
-          <template #footer>
-            <BaseButtons>
-              <BaseButton
-                type="submit"
-                color="info"
-                :label="redeemLoading ? 'Redeeming…' : 'Redeem'"
-                :disabled="redeemLoading"
-              />
-            </BaseButtons>
-          </template>
-        </CardBox>
-      </div>
-
       <!-- ⟨NEW⟩ Telemetry panel: shows right after the Howdy greeting -->
       <CardBox v-if="lc" class="mb-6">
         <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2">
@@ -254,73 +218,115 @@ async function submitAvatarUpload() {
         </div>
       </CardBox>
 
+      <!-- UPDATED LAYOUT: Left column stacks Profile (top) + Avatar Upload (middle) + Redeem Code (bottom); Right column is Password -->
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- LEFT: Profile/Avatar -->
-        <CardBox is-form @submit.prevent="submitProfile">
-          <!-- ⟨UPDATED⟩ Avatar picker + upload -->
-          <template v-if="uploadError">
-            <div class="mb-3 text-sm text-red-600 flex items-center">
-              <BaseButton :icon="mdiAlertCircle" color="danger" rounded-full small class="mr-2 pointer-events-none" />
-              <span class="break-words">{{ uploadError }}</span>
-            </div>
-          </template>
-          <template v-if="uploadSuccess && !uploadError">
-            <div class="mb-3 text-sm text-green-600">
-              {{ uploadSuccess }}
-            </div>
-          </template>
-
-          <FormField
-            label="Avatar"
-            help="Premium: JPEG/PNG under 512 KB • Admin: no limits (GIF allowed)"
-          >
-            <!-- Use existing file picker; listen for change -->
-            <FormFilePicker label="Choose file" @change="onAvatarChange" />
-
-            <div v-if="selectedName" class="mt-2 text-xs text-gray-600 dark:text-gray-300">
-              Selected: <b>{{ selectedName }}</b> ({{ formatBytes(selectedSize) }})
-            </div>
-
-            <BaseButtons class="mt-3">
-              <BaseButton
-                :icon="mdiUpload"
-                color="info"
-                :label="uploading ? 'Uploading…' : 'Upload avatar'"
-                :disabled="uploading || !selectedFile"
-                @click.prevent="submitAvatarUpload"
+        <!-- LEFT COLUMN: stack three cards -->
+        <div class="space-y-6">
+          <!-- Profile (Name / Email) -->
+          <CardBox is-form @submit.prevent="submitProfile">
+            <FormField label="Name" help="Required. Your name">
+              <FormControl
+                v-model="profileForm.name"
+                :icon="mdiAccount"
+                name="username"
+                required
+                autocomplete="username"
               />
-            </BaseButtons>
-          </FormField>
+            </FormField>
+          </CardBox>
 
-          <FormField label="Name" help="Required. Your name">
-            <FormControl
-              v-model="profileForm.name"
-              :icon="mdiAccount"
-              name="username"
-              required
-              autocomplete="username"
-            />
-          </FormField>
-          <FormField label="E-mail" help="Required. Your e-mail">
-            <FormControl
-              v-model="profileForm.email"
-              :icon="mdiMail"
-              type="email"
-              name="email"
-              required
-              autocomplete="email"
-            />
-          </FormField>
+          <CardBox is-form @submit.prevent="submitProfile">
+            <FormField label="E-mail" help="Required. Your e-mail">
+              <FormControl
+                v-model="profileForm.email"
+                :icon="mdiMail"
+                type="email"
+                name="email"
+                required
+                autocomplete="email"
+              />
+            </FormField>
 
-          <template #footer>
-            <BaseButtons>
-              <BaseButton color="info" type="submit" label="Submit" />
-              <BaseButton color="info" label="Options" outline />
-            </BaseButtons>
-          </template>
-        </CardBox>
+            <template #footer>
+              <BaseButtons>
+                <BaseButton color="info" type="submit" label="Submit" />
+                <BaseButton color="info" label="Options" outline />
+              </BaseButtons>
+            </template>
+          </CardBox>
 
-        <!-- RIGHT: Password -->
+          <!-- Avatar Upload -->
+          <CardBox>
+            <template v-if="uploadError">
+              <div class="mb-3 text-sm text-red-600 flex items-center">
+                <BaseButton :icon="mdiAlertCircle" color="danger" rounded-full small class="mr-2 pointer-events-none" />
+                <span class="break-words">{{ uploadError }}</span>
+              </div>
+            </template>
+            <template v-if="uploadSuccess && !uploadError">
+              <div class="mb-3 text-sm text-green-600">
+                {{ uploadSuccess }}
+              </div>
+            </template>
+
+            <FormField
+              label="Avatar"
+              help="Premium: JPEG/PNG under 512 KB • Admin: no limits (GIF allowed)"
+            >
+              <FormFilePicker label="Choose file" @change="onAvatarChange" />
+
+              <div v-if="selectedName" class="mt-2 text-xs text-gray-600 dark:text-gray-300">
+                Selected: <b>{{ selectedName }}</b> ({{ formatBytes(selectedSize) }})
+              </div>
+
+              <BaseButtons class="mt-3">
+                <BaseButton
+                  :icon="mdiUpload"
+                  color="info"
+                  :label="uploading ? 'Uploading…' : 'Upload avatar'"
+                  :disabled="uploading || !selectedFile"
+                  @click.prevent="submitAvatarUpload"
+                />
+              </BaseButtons>
+            </FormField>
+          </CardBox>
+
+          <!-- Redeem code (UNDER the avatar upload card) – width now matches fellow cards -->
+          <CardBox is-form @submit.prevent="submitRedeem">
+            <template v-if="redeemError">
+              <div class="mb-3 text-sm text-red-600">
+                {{ redeemError }}
+              </div>
+            </template>
+            <template v-if="redeemSuccess && !redeemError">
+              <div class="mb-3 text-sm text-green-600">
+                {{ redeemSuccess }}
+              </div>
+            </template>
+
+            <FormField label="Redeem code" help="Case-sensitive">
+              <FormControl
+                v-model="redeemForm.code"
+                name="redeem_code"
+                placeholder="Enter your code"
+                required
+              />
+            </FormField>
+
+            <template #footer>
+              <BaseButtons>
+                <BaseButton
+                  type="submit"
+                  color="info"
+                  :label="redeemLoading ? 'Redeeming…' : 'Redeem'"
+                  :disabled="redeemLoading"
+                />
+              </BaseButtons>
+            </template>
+          </CardBox>
+        </div>
+
+        <!-- RIGHT COLUMN: Password -->
         <CardBox is-form @submit.prevent="submitPass">
           <FormField label="Current password" help="Required. Your current password">
             <FormControl
