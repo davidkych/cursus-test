@@ -12,6 +12,7 @@ import {
   mdiResponsive,
   mdiPalette,
   mdiReact,
+  mdiAccountMultiple,          // ← NEW: icon for Users
 } from '@mdi/js'
 
 /**
@@ -29,6 +30,12 @@ export default [
     to: '/admin/tables',
     label: 'Tables',
     icon: mdiTable,
+  },
+  // ⟨NEW⟩ Users management
+  {
+    to: '/admin/users',
+    label: 'Users',
+    icon: mdiAccountMultiple,
   },
   {
     to: '/admin/forms',

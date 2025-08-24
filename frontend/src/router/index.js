@@ -137,6 +137,13 @@ const adminRoutes = [
     name: 'adm-codes',
     component: resolveView('CodesView.vue', 'admin'),
   },
+  // ⟨NEW⟩ Users management view (admin)
+  {
+    meta: { title: 'Users' },
+    path: '/admin/users',
+    name: 'adm-users',
+    component: resolveView('UsersView.vue', 'admin'),
+  },
 ]
 
 // ────────────────────────────────────────────────────────────────────────────────
