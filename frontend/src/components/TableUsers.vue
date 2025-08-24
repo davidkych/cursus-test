@@ -23,7 +23,7 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['change-page'])
+const emit = defineEmits(['change-page', 'request-delete'])
 
 /* ───────────────────────── Avatar resolver ─────────────────────────
    Prefer SAS when custom; otherwise map built-in /assets/propics/*.png */
@@ -190,11 +190,19 @@ function goPage(p) {
             <span v-else>—</span>
           </td>
 
-          <!-- actions (eye + trash, functionless) -->
+          <!-- actions (eye preserved; trash now emits request-delete) -->
           <td class="px-4 py-3 text-right">
             <div class="inline-flex space-x-2">
               <BaseButton :icon="mdiEye" color="info" small outline />
-              <BaseButton :icon="mdiTrashCan" color="danger" small outline />
+              <BaseButton
+                :icon="mdiTrashCan"
+                color="danger"
+                small
+                outline
+                :disabled="loading"
+                @click="$emit('request-delete', row)"
+                title="Delete account"
+              />
             </div>
           </td>
         </tr>

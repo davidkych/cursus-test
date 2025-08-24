@@ -12,11 +12,12 @@ import BaseButton from '@/components/BaseButton.vue'
 import NotificationBar from '@/components/NotificationBar.vue'
 
 import TableUsers from '@/components/TableUsers.vue'
-import { listUsers } from '@/services/adminUsers.js'
+import { listUsers, deleteUser } from '@/services/adminUsers.js'
 
 /* ───────────────────────── state ───────────────────────── */
 const loading = ref(false)
 const errorMsg = ref('')
+const successMsg = ref('')
 
 const page = ref(1)
 const pageSize = 20 // fixed by spec
@@ -31,6 +32,7 @@ const rows = ref([])
 async function load() {
   loading.value = true
   errorMsg.value = ''
+  successMsg.value = ''
   try {
     const res = await listUsers({ page: page.value, pageSize, includeAvatars: true })
     page.value       = res.page
@@ -54,6 +56,30 @@ function onChangePage(newPage) {
   load()
 }
 
+/* ───────────────────────── delete handler ───────────────────── */
+async function onRequestDelete(row) {
+  if (!row || !row.username) return
+  const ok = window.confirm(`Delete user "${row.username}"?\nThis action cannot be undone.`)
+  if (!ok) return
+
+  loading.value = true
+  errorMsg.value = ''
+  successMsg.value = ''
+  try {
+    await deleteUser({ username: row.username, purgeAvatar: true, allowSelf: false })
+    successMsg.value = `Deleted "${row.username}".`
+    // If it was the last row on the page, step back a page (if possible)
+    if (rows.value.length <= 1 && page.value > 1) {
+      page.value = page.value - 1
+    }
+    await load()
+  } catch (err) {
+    errorMsg.value = err?.message || 'Failed to delete user'
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -75,6 +101,9 @@ onMounted(load)
       <NotificationBar v-if="errorMsg" color="danger">
         {{ errorMsg }}
       </NotificationBar>
+      <NotificationBar v-if="successMsg" color="info">
+        {{ successMsg }}
+      </NotificationBar>
 
       <CardBox class="mb-6" has-table>
         <template v-if="rows.length">
@@ -86,6 +115,7 @@ onMounted(load)
             :has-next="hasNext"
             :loading="loading"
             @change-page="onChangePage"
+            @request-delete="onRequestDelete"
           />
         </template>
         <template v-else>

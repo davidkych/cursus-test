@@ -1,23 +1,30 @@
 # ── src/routers/auth/admin_users.py ───────────────────────────────────────────
 """
-Admin-only user listing (read-only).
+Admin-only user management endpoints.
 
+READ (existing)
+---------------
 GET /api/auth/admin/users
 Query:
   - page (int, 1-based, default 1, min 1)
   - page_size (int, default 20; server-enforced cap at 20)
   - include_avatars (0|1, default 1) – include short-lived SAS avatar_url for custom avatars
   - include_total (0|1, default 1) – include exact total & total_pages (for 1..last pagination)
+Sorting: ORDER BY username ASC
 
-Sorting:
-  - ORDER BY username ASC
+DELETE (new)
+------------
+DELETE /api/auth/admin/users/{username}
+Query:
+  - purge_avatar (0|1, default 1) – also delete custom avatar blob if present
+  - allow_self   (0|1, default 0) – block deleting the caller by default (403)
 
 Notes:
   - Uses MSI for Cosmos + Storage.
   - SAS minting limited to items on the current page (max 20).
 """
 
-from fastapi import APIRouter, HTTPException, Request, status, Query
+from fastapi import APIRouter, HTTPException, Request, status, Query, Path
 from pydantic import BaseModel, EmailStr
 from typing import List, Optional, Dict, Any
 from azure.identity import DefaultAzureCredential
@@ -136,6 +143,22 @@ def _build_avatar_sas_url(blob_name: str) -> Optional[str]:
         return None
 
 
+def _delete_avatar_blob(blob_name: str) -> bool:
+    """
+    Best-effort delete of a user's custom avatar blob.
+    Returns True if delete was attempted and no error occurred.
+    """
+    if not (_blob_service and _images_container and blob_name):
+        return False
+    try:
+        container = _blob_service.get_container_client(_images_container)
+        blob = container.get_blob_client(blob_name)
+        blob.delete_blob()  # idempotent if blob missing (may still raise NotFound on some versions)
+        return True
+    except Exception:
+        return False
+
+
 # ─────────────────────────── Models ───────────────────────────────────────────
 class AdminUserItem(BaseModel):
     id: str
@@ -157,6 +180,13 @@ class AdminUserListResponse(BaseModel):
     has_prev: bool
     has_next: bool
     items: List[AdminUserItem]
+
+
+class AdminUserDeleteResponse(BaseModel):
+    status: str = "ok"
+    username: str
+    was_present: bool
+    purged_avatar: bool
 
 
 # ─────────────────────────── Router ───────────────────────────────────────────
@@ -204,7 +234,6 @@ def admin_list_users(
             )
             total = int(total_items[0]) if total_items else 0
         except Exception:
-            # On failure, leave total at 0; UI will still get items below
             total = 0
         total_pages = max(1, math.ceil(total / page_size)) if page_size else 1
 
@@ -214,7 +243,6 @@ def admin_list_users(
 
     # Page slice
     offset = (page - 1) * page_size
-    # Cosmos SQL currently accepts OFFSET/LIMIT literals; inject sanitized ints
     fields = (
         "c.id, c.username, c.email, c.gender, c.dob, c.country, "
         "c.profile_pic_id, c.profile_pic_type, c.custom_avatar"
@@ -257,7 +285,6 @@ def admin_list_users(
         has_prev = page > 1
         has_next = page < total_pages
     else:
-        # Fallback when total is not provided
         has_prev = page > 1
         has_next = len(items) >= page_size  # heuristic
 
@@ -269,4 +296,70 @@ def admin_list_users(
         "has_prev": has_prev,
         "has_next": has_next,
         "items": items,
+    }
+
+
+@router.delete(
+    "/admin/users/{username}",
+    response_model=AdminUserDeleteResponse,
+    status_code=status.HTTP_200_OK,
+)
+def admin_delete_user(
+    request: Request,
+    username: str = Path(..., min_length=1),
+    purge_avatar: int = Query(1, ge=0, le=1),
+    allow_self: int = Query(0, ge=0, le=1),
+):
+    """
+    Delete a user account by username.
+    - Requires admin privileges.
+    - Blocks self-deletion by default (allow with ?allow_self=1).
+    - purges custom avatar blob by default (?purge_avatar=1).
+    - Always returns 200 with JSON body on the success path (idempotent).
+    """
+    # AuthN
+    token = _extract_bearer_token(request)
+    caller = _decode_jwt_subject(token)
+    caller_doc = _get_user_by_username(caller)
+    if not caller_doc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    # AuthZ: require is_admin
+    if not bool(caller_doc.get("is_admin", False)):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+
+    # Self-delete protection (default block)
+    if username == caller and allow_self != 1:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cannot delete your own account")
+
+    # Attempt to load target user
+    target = _get_user_by_username(username)
+    if not target:
+        # Idempotent: report not present
+        return {
+            "status": "ok",
+            "username": username,
+            "was_present": False,
+            "purged_avatar": False,
+        }
+
+    # Purge avatar if requested and present
+    purged = False
+    if purge_avatar == 1:
+        meta = target.get("custom_avatar") if isinstance(target.get("custom_avatar"), dict) else None
+        blob_name = meta.get("blob") if meta else None
+        if isinstance(blob_name, str) and blob_name:
+            purged = _delete_avatar_blob(blob_name)
+
+    # Delete the user document (hard delete)
+    try:
+        _users.delete_item(item=username, partition_key=username)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete user: {e}")
+
+    return {
+        "status": "ok",
+        "username": username,
+        "was_present": True,
+        "purged_avatar": purged,
     }

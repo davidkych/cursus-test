@@ -1,9 +1,12 @@
 // frontend/src/services/adminUsers.js
-// Read-only Admin Users API client.
+// Read-only Admin Users API client + delete user.
 // Uses existing authFetch (injects Bearer token & clears token on 401).
 //
 // listUsers({ page=1, pageSize=20, includeAvatars=true })
 //   → { page, page_size, total, total_pages, has_prev, has_next, items: [...] }
+//
+// deleteUser({ username, purgeAvatar=true, allowSelf=false })
+//   → { status: 'ok', username, was_present, purged_avatar }
 
 import { authFetch } from '@/services/auth.js'
 
@@ -82,5 +85,38 @@ export async function listUsers({ page = 1, pageSize = 20, includeAvatars = true
 
   const res = await authFetch(url.toString(), { method: 'GET' })
   await throwIfNotOk(res, 'Failed to load users')
+  return res.json()
+}
+
+/**
+ * Delete a user account by username (admin-only).
+ * - Blocks self-deletion by default (server returns 403 unless allowSelf=true).
+ * - Purges custom avatar blob by default (purgeAvatar=true).
+ *
+ * @param {Object} opts
+ * @param {string} opts.username
+ * @param {boolean} [opts.purgeAvatar=true]
+ * @param {boolean} [opts.allowSelf=false]
+ * @returns {Promise<{
+ *   status: 'ok',
+ *   username: string,
+ *   was_present: boolean,
+ *   purged_avatar: boolean
+ * }>}
+ */
+export async function deleteUser({ username, purgeAvatar = true, allowSelf = false } = {}) {
+  if (!username || typeof username !== 'string') {
+    throw new Error('username is required')
+  }
+
+  const url = new URL(
+    `${API_BASE}/api/auth/admin/users/${encodeURIComponent(username)}`,
+    window.location.origin,
+  )
+  url.searchParams.set('purge_avatar', purgeAvatar ? '1' : '0')
+  url.searchParams.set('allow_self', allowSelf ? '1' : '0')
+
+  const res = await authFetch(url.toString(), { method: 'DELETE' })
+  await throwIfNotOk(res, 'Failed to delete user')
   return res.json()
 }
