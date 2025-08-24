@@ -1,6 +1,9 @@
 <!-- frontend/src/viewsAdmin/UsersView.vue -->
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useUserMode } from '@/stores/userMode.js'
+import { useAuth } from '@/stores/auth.js'
 import { mdiTableBorder, mdiGithub } from '@mdi/js'
 
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue'
@@ -12,7 +15,7 @@ import BaseButton from '@/components/BaseButton.vue'
 import NotificationBar from '@/components/NotificationBar.vue'
 
 import TableUsers from '@/components/TableUsers.vue'
-import { listUsers, deleteUser } from '@/services/adminUsers.js'
+import { listUsers, deleteUser, impersonate } from '@/services/adminUsers.js'
 
 /* ───────────────────────── state ───────────────────────── */
 const loading = ref(false)
@@ -27,6 +30,11 @@ const hasPrev = ref(false)
 const hasNext = ref(false)
 
 const rows = ref([])
+
+/* stores & router */
+const router = useRouter()
+const userMode = useUserMode()
+const auth = useAuth()
 
 /* ───────────────────────── data load ───────────────────── */
 async function load() {
@@ -80,6 +88,38 @@ async function onRequestDelete(row) {
   }
 }
 
+/* ───────────────────────── impersonate handler ───────────────────── */
+async function onRequestImpersonate(row) {
+  if (!row || !row.username) return
+  const target = row.username
+
+  loading.value = true
+  errorMsg.value = ''
+  successMsg.value = ''
+  try {
+    // Call admin API to mint a token for the target user
+    const res = await impersonate({ username: target }) // { access_token, token_type }
+    const token = res?.access_token
+    if (!token) throw new Error('No token returned')
+
+    // Persist token for router guard + set into auth store
+    try { localStorage.setItem('auth.token', token) } catch { /* ignore */ }
+    auth.token = token
+
+    // Refresh current user profile under the new identity
+    await auth.refresh()
+
+    // Switch UI to public mode and navigate to public dashboard
+    userMode.setPublic()
+    successMsg.value = `Now impersonating "${target}". Redirecting…`
+    await router.push('/public/dashboard')
+  } catch (err) {
+    errorMsg.value = err?.message || 'Failed to impersonate user'
+  } finally {
+    loading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -116,6 +156,7 @@ onMounted(load)
             :loading="loading"
             @change-page="onChangePage"
             @request-delete="onRequestDelete"
+            @request-impersonate="onRequestImpersonate"
           />
         </template>
         <template v-else>

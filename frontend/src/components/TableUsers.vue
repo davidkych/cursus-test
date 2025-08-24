@@ -23,7 +23,8 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['change-page', 'request-delete'])
+/* ⟨UPDATED⟩ add request-impersonate for eye button */
+const emit = defineEmits(['change-page', 'request-delete', 'request-impersonate'])
 
 /* ───────────────────────── Avatar resolver ─────────────────────────
    Prefer SAS when custom; otherwise map built-in /assets/propics/*.png */
@@ -190,10 +191,18 @@ function goPage(p) {
             <span v-else>—</span>
           </td>
 
-          <!-- actions (eye preserved; trash now emits request-delete) -->
+          <!-- ⟨UPDATED⟩ actions: eye → request-impersonate; trash → request-delete -->
           <td class="px-4 py-3 text-right">
             <div class="inline-flex space-x-2">
-              <BaseButton :icon="mdiEye" color="info" small outline />
+              <BaseButton
+                :icon="mdiEye"
+                color="info"
+                small
+                outline
+                :disabled="loading"
+                title="Impersonate account"
+                @click="$emit('request-impersonate', row)"
+              />
               <BaseButton
                 :icon="mdiTrashCan"
                 color="danger"

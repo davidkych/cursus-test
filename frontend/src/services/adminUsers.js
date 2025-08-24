@@ -1,5 +1,5 @@
 // frontend/src/services/adminUsers.js
-// Read-only Admin Users API client + delete user.
+// Read-only Admin Users API client + delete user + impersonate (admin-only).
 // Uses existing authFetch (injects Bearer token & clears token on 401).
 //
 // listUsers({ page=1, pageSize=20, includeAvatars=true })
@@ -7,6 +7,9 @@
 //
 // deleteUser({ username, purgeAvatar=true, allowSelf=false })
 //   → { status: 'ok', username, was_present, purged_avatar }
+//
+// impersonate({ username, ttlMinutes })
+//   → { access_token, token_type: 'bearer', for_username, actor, expires_in }
 
 import { authFetch } from '@/services/auth.js'
 
@@ -118,5 +121,39 @@ export async function deleteUser({ username, purgeAvatar = true, allowSelf = fal
 
   const res = await authFetch(url.toString(), { method: 'DELETE' })
   await throwIfNotOk(res, 'Failed to delete user')
+  return res.json()
+}
+
+/**
+ * Request an impersonation token for a target user (admin-only).
+ * The returned token can be fed to the auth store for a seamless switch.
+ *
+ * @param {Object} opts
+ * @param {string} opts.username                   target username
+ * @param {number} [opts.ttlMinutes]               optional desired TTL; server clamps
+ * @returns {Promise<{
+ *   access_token: string,
+ *   token_type: 'bearer',
+ *   for_username: string,
+ *   actor: string,
+ *   expires_in: number
+ * }>}
+ */
+export async function impersonate({ username, ttlMinutes } = {}) {
+  if (!username || typeof username !== 'string') {
+    throw new Error('username is required')
+  }
+
+  const payload = { username }
+  if (Number.isFinite(ttlMinutes)) {
+    payload.ttl_minutes = Math.trunc(ttlMinutes)
+  }
+
+  const res = await authFetch(`${API_BASE}/api/auth/admin/impersonate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  await throwIfNotOk(res, 'Failed to impersonate user')
   return res.json()
 }

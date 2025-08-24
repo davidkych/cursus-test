@@ -255,6 +255,50 @@ export const useAuth = defineStore('auth', () => {
     }
   }
 
+  /**
+   * Directly adopt a token (e.g., admin impersonation flow) and refresh /me.
+   * @param {string} newToken
+   */
+  async function loginWithToken(newToken) {
+    if (!newToken || typeof newToken !== 'string') {
+      throw new Error('A valid token string is required')
+    }
+
+    if (MOCK) {
+      // In mock, just set and synthesize a user; keeps UI consistent.
+      token.value = newToken
+      writeToken(token.value)
+      user.value = {
+        id: 'mock-impersonated',
+        username: 'mockimp',
+        email: 'mockimp@example.com',
+        created: new Date().toISOString(),
+        profile_pic_id: 1,
+        profile_pic_type: 'default',
+        is_admin: false,
+        is_premium_member: false,
+      }
+      syncMainStoreUser(user.value)
+      return
+    }
+
+    token.value = newToken
+    writeToken(token.value)
+
+    // Pull fresh /me under the new identity
+    try {
+      const u = await apiMe()
+      user.value = u
+      syncMainStoreUser(user.value)
+    } catch (e) {
+      // Roll back token on failure to avoid bricking the session
+      token.value = null
+      writeToken(null)
+      user.value = null
+      throw new Error('Failed to adopt token')
+    }
+  }
+
   function setUser(u) {
     user.value = u
     // keep main store in sync when caller updates the user programmatically
@@ -297,6 +341,7 @@ export const useAuth = defineStore('auth', () => {
     // actions
     init,
     login,
+    loginWithToken, // ⟨NEW⟩
     logout,
     setUser,
     refresh, // ⟨NEW⟩
